@@ -96,9 +96,18 @@ def update_vram_on_change(preset, model_choice):
 def prompt_enc(prompt, tar_lang):
     """
     Enhances the prompt using the prompt expander model.
-    Loads the expander if needed.
+    Before enhancing, the loaded WAN pipeline (if any) is cleared to free VRAM.
+    After enhancement, the prompt expander is also cleared so that the WAN pipeline will reload on video generation.
     """
-    global prompt_expander, args
+    global prompt_expander, loaded_pipeline, loaded_pipeline_config, args
+
+    # Clear the WAN pipeline before running prompt enhancement (free up VRAM)
+    if loaded_pipeline is not None:
+        print("[CMD] Clearing loaded WAN pipeline before prompt enhancement.")
+        loaded_pipeline = None
+        loaded_pipeline_config = {}
+
+    # Load the prompt expander if needed
     if prompt_expander is None:
         if args.prompt_extend_method == "dashscope":
             prompt_expander = DashScopePromptExpander(model_name=args.prompt_extend_model, is_vl=False)
@@ -109,10 +118,12 @@ def prompt_enc(prompt, tar_lang):
                 f"Unsupported prompt_extend_method: {args.prompt_extend_method}"
             )
     prompt_output = prompt_expander(prompt, tar_lang=tar_lang.lower())
-    if not prompt_output.status:
-        return prompt
-    else:
-        return prompt_output.prompt
+    result = prompt if not prompt_output.status else prompt_output.prompt
+
+    # Clear the prompt expander after using it to ensure reloading later
+    prompt_expander = None
+
+    return result
 
 
 def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
