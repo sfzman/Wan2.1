@@ -46,13 +46,14 @@ def update_vram_and_resolution(model_choice, preset):
     if "1.3B" in model_choice:
         mapping = {
             "4GB": "0",
-            "6GB": "0",
-            "8GB": "0",
+            "6GB": "500000000",
+            "8GB": "1000000000",
             "10GB": "7000000000",
             "12GB": "7000000000",
             "16GB": "7000000000",
             "24GB": "7000000000",
-            "48GB": "7000000000",
+            "48GB": "12000000000",
+            "80GB": "12000000000"
         }
         resolution_choices = ["832x480", "480x832"]
         default_resolution = "480x832"
@@ -66,11 +67,12 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "0",
             "16GB": "0",
             "24GB": "0",
-            "48GB": "7000000000",
+            "48GB": "12000000000",
+            "80GB": "70000000000"
         }
         resolution_choices = ["1280x720", "720x1280"]
         default_resolution = "720x1280"
-    return mapping.get(preset, "7000000000"), resolution_choices, default_resolution
+    return mapping.get(preset, "12000000000"), resolution_choices, default_resolution
 
 
 def update_model_settings(model_choice, current_vram_preset):
@@ -614,11 +616,11 @@ if __name__ == "__main__":
                 gr.Markdown("### GPU Settings")
                 with gr.Row():
                     vram_preset_radio = gr.Radio(
-                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "48GB"],
+                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "48GB", "80GB"],
                         label="GPU VRAM Preset",
                         value="48GB"
                     )
-                    num_persistent_text = gr.Textbox(label="num_persistent_param_in_dit", value="7000000000")
+                    num_persistent_text = gr.Textbox(label="num_persistent_param_in_dit", value="12000000000")
                     torch_dtype_radio = gr.Radio(
                         choices=["torch.float8_e4m3fn", "torch.bfloat16"],
                         label="Torch DType",
