@@ -71,6 +71,7 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "7000000000",
             "16GB": "7000000000",
             "24GB": "7000000000",
+            "32GB": "7000000000",
             "48GB": "12000000000",
             "80GB": "12000000000"
         }
@@ -85,6 +86,7 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "0",
             "16GB": "0",
             "24GB": "3000000000",
+            "32GB": "6500000000",
             "48GB": "22000000000",
             "80GB": "70000000000"
         }
@@ -99,6 +101,7 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "0",
             "16GB": "0",
             "24GB": "0",
+            "32GB": "3500000000",
             "48GB": "12000000000",
             "80GB": "70000000000"
         }
@@ -111,9 +114,10 @@ def update_vram_and_resolution(model_choice, preset):
             "8GB": "0",
             "10GB": "0",
             "12GB": "0",
-            "16GB": "500000000",
-            "24GB": "3000000000",
-            "48GB": "12000000000",
+            "16GB": "1200000000",
+            "24GB": "5000000000",
+            "32GB": "9500000000",
+            "48GB": "20000000000",
             "80GB": "70000000000"
         }
         resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
@@ -127,6 +131,7 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "0",
             "16GB": "0",
             "24GB": "0",
+            "32GB": "12000000000",
             "48GB": "12000000000",
             "80GB": "70000000000"
         }
@@ -708,7 +713,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V6 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V7 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -726,9 +731,9 @@ if __name__ == "__main__":
                         value="WAN 2.1 1.3B (Text/Video-to-Video)"
                     )
                     vram_preset_radio = gr.Radio(
-                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "48GB", "80GB"],
+                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB","32GB", "48GB", "80GB"],
                         label="GPU VRAM Preset",
-                        value="48GB"
+                        value="24GB"
                     )
                 with gr.Row():
                     # Fix: set default aspect ratios so that they are visible immediately.
