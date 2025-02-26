@@ -35,15 +35,16 @@ def update_vram_and_resolution(model_choice, preset):
     Maps GPU VRAM preset names to a num_persistent_param_in_dit value based on the selected model.
     
     For 1.3B model:
-      - "4GB", "6GB", "8GB" => 0
-      - "10GB", "12GB", "16GB", "24GB", "48GB" => 7000000000
+      - "4GB", "6GB", "8GB", ... => specific values and resolution choices.
+    
+    For 14B Text-to-Video model:
+      - Most lower VRAM presets map to "0" until "48GB" and "80GB" which map to large numbers.
       
-    For 14B models:
-      - "4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB" => 0
-      - "48GB" => 7000000000
-    Also returns resolution choices and a default based on model.
+    For 14B Image-to-Video model (new separation):
+      - Uses a new mapping with different values and sets a different default resolution.
     """
-    if "1.3B" in model_choice:
+    print(model_choice)
+    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
         mapping = {
             "4GB": "0",
             "6GB": "500000000",
@@ -57,8 +58,35 @@ def update_vram_and_resolution(model_choice, preset):
         }
         resolution_choices = ["832x480", "480x832"]
         default_resolution = "480x832"
+    elif model_choice == "WAN 2.1 14B Text-to-Video":
+        mapping = {
+            "4GB": "0",
+            "6GB": "0",
+            "8GB": "0",
+            "10GB": "0",
+            "12GB": "0",
+            "16GB": "0",
+            "24GB": "3000000000",
+            "48GB": "22000000000",
+            "80GB": "70000000000"
+        }
+        resolution_choices = ["1280x720", "720x1280"]
+        default_resolution = "720x1280"
+    elif model_choice == "WAN 2.1 14B Image-to-Video":  # New separation for image-to-video models
+        mapping = {
+            "4GB": "0",
+            "6GB": "0",
+            "8GB": "0",
+            "10GB": "0",
+            "12GB": "0",
+            "16GB": "0",
+            "24GB": "0",
+            "48GB": "12000000000",
+            "80GB": "70000000000"
+        }
+        resolution_choices = ["1280x720", "720x1280"]
+        default_resolution = "1280x720"  # New default resolution for 14B Image-to-Video
     else:
-        # 14B models
         mapping = {
             "4GB": "0",
             "6GB": "0",
@@ -156,15 +184,13 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
         model_manager.load_models(
             [
                 [
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00007-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors",
+                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors",
+                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors",
+                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors",
+                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors",
+                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors"
                 ],
-                "models/Wan-AI/Wan2.1-T2V-14B/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
                 "models/Wan-AI/Wan2.1-T2V-14B/models_t5_umt5-xxl-enc-bf16.pth",
                 "models/Wan-AI/Wan2.1-T2V-14B/Wan2.1_VAE.pth",
             ],
@@ -172,7 +198,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
         )
         pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
     elif model_choice == "14B_image":
-        # 14B image-to-video pipeline
+        # 14B image-to-video pipeline (same as before, but now with separate configuration values)
         model_manager.load_models(
             [
                 [
@@ -581,6 +607,19 @@ if __name__ == "__main__":
                         value="480x832"
                     )
                 # Generate and Cancel buttons.
+                gr.Markdown("### GPU Settings")
+                with gr.Row():
+                    vram_preset_radio = gr.Radio(
+                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "48GB", "80GB"],
+                        label="GPU VRAM Preset",
+                        value="48GB"
+                    )
+                    num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value="12000000000")
+                    torch_dtype_radio = gr.Radio(
+                        choices=["torch.float8_e4m3fn", "torch.bfloat16"],
+                        label="Torch DType (float8_e4m3fn not working yet)",
+                        value="torch.bfloat16"
+                    )                
                 with gr.Row():
                     generate_button = gr.Button("Generate", variant="primary")
                     cancel_button = gr.Button("Cancel")
@@ -602,7 +641,7 @@ if __name__ == "__main__":
                 # Quality, FPS, Number of Frames.
                 with gr.Row():
                     quality_slider = gr.Slider(minimum=1, maximum=10, step=1, value=5, label="Quality")
-                    fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=15, label="FPS (for saving video)")
+                    fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=16, label="FPS (for saving video)")
                     num_frames_slider = gr.Slider(minimum=1, maximum=300, step=1, value=81, label="Number of Frames")
                 # Inference Steps slider (new)
                 inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=50, label="Inference Steps")
@@ -613,19 +652,7 @@ if __name__ == "__main__":
                 denoising_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, value=0.7,
                                              label="Denoising Strength (only for video-to-video)")
                 # GPU Settings.
-                gr.Markdown("### GPU Settings")
-                with gr.Row():
-                    vram_preset_radio = gr.Radio(
-                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "48GB", "80GB"],
-                        label="GPU VRAM Preset",
-                        value="48GB"
-                    )
-                    num_persistent_text = gr.Textbox(label="num_persistent_param_in_dit", value="12000000000")
-                    torch_dtype_radio = gr.Radio(
-                        choices=["torch.float8_e4m3fn", "torch.bfloat16"],
-                        label="Torch DType",
-                        value="torch.bfloat16"
-                    )
+
             with gr.Column(scale=3):
                 # Output Column: Generated video, then batch processing section, then logs.
                 video_output = gr.Video(label="Generated Video", height=720)
