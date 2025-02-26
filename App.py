@@ -90,7 +90,7 @@ def update_vram_and_resolution(model_choice, preset):
         }
         resolution_choices = list(ASPECT_RATIOS_14b.keys())
         default_aspect = "16:9"
-    elif model_choice == "WAN 2.1 14B Image-to-Video":
+    elif model_choice == "WAN 2.1 14B Image-to-Video 720P":
         mapping = {
             "4GB": "0",
             "6GB": "0",
@@ -103,6 +103,20 @@ def update_vram_and_resolution(model_choice, preset):
             "80GB": "70000000000"
         }
         resolution_choices = list(ASPECT_RATIOS_14b.keys())
+        default_aspect = "16:9"
+    elif model_choice == "WAN 2.1 14B Image-to-Video 480P":
+        mapping = {
+            "4GB": "0",
+            "6GB": "0",
+            "8GB": "0",
+            "10GB": "0",
+            "12GB": "0",
+            "16GB": "500000000",
+            "24GB": "3000000000",
+            "48GB": "12000000000",
+            "80GB": "70000000000"
+        }
+        resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
         default_aspect = "16:9"
     else:
         mapping = {
@@ -126,7 +140,7 @@ def update_model_settings(model_choice, current_vram_preset):
     the available aspect ratios and automatically set the width and height sliders.
     """
     num_persistent_val, aspect_options, default_aspect = update_vram_and_resolution(model_choice, current_vram_preset)
-    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
+    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P":
         default_width, default_height = ASPECT_RATIOS_1_3b.get(default_aspect, (832, 480))
     else:
         default_width, default_height = ASPECT_RATIOS_14b.get(default_aspect, (1280, 720))
@@ -142,7 +156,7 @@ def update_width_height(aspect_ratio, model_choice):
     When the aspect ratio is changed, update both the width and height sliders to the default values
     based on the selected model and aspect ratio.
     """
-    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
+    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P":
         default_width, default_height = ASPECT_RATIOS_1_3b.get(aspect_ratio, (832, 480))
     else:
         default_width, default_height = ASPECT_RATIOS_14b.get(aspect_ratio, (1280, 720))
@@ -280,9 +294,12 @@ def generate_videos(
     elif model_choice_radio == "WAN 2.1 14B Text-to-Video":
         model_choice = "14B_text"
         d = ASPECT_RATIOS_14b
-    elif model_choice_radio == "WAN 2.1 14B Image-to-Video":
-        model_choice = "14B_image"
+    elif model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
+        model_choice = "14B_image_720p"
         d = ASPECT_RATIOS_14b
+    elif model_choice_radio == "WAN 2.1 14B Image-to-Video 480P":
+        model_choice = "14B_image_480p"
+        d = ASPECT_RATIOS_1_3b
     else:
         return "", "Invalid model choice.", ""
     
@@ -369,7 +386,7 @@ def generate_videos(
                     video_data = loaded_pipeline(**common_args)
             elif model_choice == "14B_text":
                 video_data = loaded_pipeline(**common_args)
-            elif model_choice == "14B_image":
+            elif model_choice == "14B_image_720p" or model_choice == "14B_image_480p":
                 if input_image is None:
                     err_msg = "[CMD] Error: Image model selected but no image provided."
                     print(err_msg)
@@ -426,16 +443,20 @@ def batch_process_videos(
     cancel_batch_flag = False  # reset cancellation flag for batch process
     log_text = ""
     
-    # Ensure batch processing is run only with the 14B Image-to-Video model.
-    if model_choice_radio != "WAN 2.1 14B Image-to-Video":
-        log_text += "[CMD] Batch processing currently only supports the WAN 2.1 14B Image-to-Video model.\n"
+    # Ensure batch processing is run only with one of the Image-to-Video models.
+    if model_choice_radio not in ["WAN 2.1 14B Image-to-Video 720P", "WAN 2.1 14B Image-to-Video 480P"]:
+        log_text += "[CMD] Batch processing currently only supports the WAN 2.1 14B Image-to-Video models.\n"
         return log_text
 
     target_width = int(width)
     target_height = int(height)
     
     vram_value = num_persistent_input
-    model_choice = "14B_image"
+    if model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
+        model_choice = "14B_image_720p"
+    else:  # WAN 2.1 14B Image-to-Video 480P
+        model_choice = "14B_image_480p"
+        
     current_config = {
         "model_choice": model_choice,
         "torch_dtype": torch_dtype,
@@ -576,7 +597,7 @@ def open_outputs_folder():
 def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
     """
     Loads the appropriate WAN pipeline based on:
-      - model_choice: one of "1.3B", "14B_text", or "14B_image"
+      - model_choice: one of "1.3B", "14B_text", "14B_image_720p", or "14B_image_480p"
       - torch_dtype_str: either "torch.float8_e4m3fn" or "torch.bfloat16"
       - num_persistent: VRAM related parameter (can be an integer or None)
     """
@@ -612,7 +633,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             torch_dtype=torch_dtype,
         )
         pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
-    elif model_choice == "14B_image":
+    elif model_choice == "14B_image_720p":
         model_manager.load_models(
             [
                 [
@@ -627,6 +648,25 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
                 "models/Wan-AI/Wan2.1-I2V-14B-720P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
                 "models/Wan-AI/Wan2.1-I2V-14B-720P/models_t5_umt5-xxl-enc-bf16.pth",
                 "models/Wan-AI/Wan2.1-I2V-14B-720P/Wan2.1_VAE.pth",
+            ],
+            torch_dtype=torch_dtype,
+        )
+        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+    elif model_choice == "14B_image_480p":
+        model_manager.load_models(
+            [
+                [
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00001-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00002-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00003-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00004-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00005-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00006-of-00007.safetensors",
+                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00007-of-00007.safetensors",
+                ],
+                "models/Wan-AI/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
+                "models/Wan-AI/Wan2.1-I2V-14B-480P/models_t5_umt5-xxl-enc-bf16.pth",
+                "models/Wan-AI/Wan2.1-I2V-14B-480P/Wan2.1_VAE.pth",
             ],
             torch_dtype=torch_dtype,
         )
@@ -668,7 +708,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V5 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V6 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -679,7 +719,8 @@ if __name__ == "__main__":
                         choices=[
                             "WAN 2.1 1.3B (Text/Video-to-Video)",
                             "WAN 2.1 14B Text-to-Video",
-                            "WAN 2.1 14B Image-to-Video"
+                            "WAN 2.1 14B Image-to-Video 720P",
+                            "WAN 2.1 14B Image-to-Video 480P"
                         ],
                         label="Model Choice",
                         value="WAN 2.1 1.3B (Text/Video-to-Video)"
