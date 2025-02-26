@@ -668,7 +668,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V3 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V5 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -787,6 +787,12 @@ if __name__ == "__main__":
             fn=update_width_height,
             inputs=[aspect_ratio_radio, model_choice_radio],
             outputs=[width_slider, height_slider]
+        )
+        # New binding: update VRAM value every time the GPU VRAM Preset changes.
+        vram_preset_radio.change(
+            fn=update_vram_on_change,
+            inputs=[vram_preset_radio, model_choice_radio],
+            outputs=num_persistent_text
         )
 
         demo.launch(share=args.share, inbrowser=True)
