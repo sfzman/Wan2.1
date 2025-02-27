@@ -655,7 +655,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     elif model_choice == "14B_text":
         model_manager.load_models(
             [
@@ -672,7 +672,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     elif model_choice == "14B_image_720p":
         model_manager.load_models(
             [
@@ -691,7 +691,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     elif model_choice == "14B_image_480p":
         model_manager.load_models(
             [
@@ -710,7 +710,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     else:
         raise ValueError("Invalid model choice")
     
@@ -748,7 +748,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V9 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V10 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
