@@ -196,35 +196,45 @@ def auto_crop_image(image, target_width, target_height):
         image = image.crop((left, top, left + target_width, top + target_height))
     return image
 
-def auto_crop_video(video_path, target_width, target_height):
+def auto_crop_video(video_path, target_width, target_height, desired_frame_count, desired_fps=16):
     """
     Reads a video from disk, and for each frame:
       - Downscales if the frame is larger than target dimensions.
       - Performs center crop to get exactly the target resolution.
+      - Processes only a number of frames equal to desired_frame_count.
     Saves to a new file (with a _cropped suffix) and returns its path.
+    
+    The output video FPS is set to desired_fps.
+    The output video duration will be desired_frame_count / desired_fps seconds.
     """
+    print(f"[CMD] Starting video processing for file: {video_path}")
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"[CMD] Failed to open video: {video_path}")
         return video_path
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    orig_fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"[CMD] Original video FPS: {orig_fps}")
+    orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"[CMD] Original video resolution: {orig_width}x{orig_height}")
+    scale = min(1.0, target_width / orig_width, target_height / orig_height)
+    new_width = int(orig_width * scale)
+    new_height = int(orig_height * scale)
+    print(f"[CMD] Scaling factor: {scale}. New intermediate resolution: {new_width}x{new_height}")
     
     base, ext = os.path.splitext(video_path)
     out_path = base + "_cropped.mp4"
     
-    orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    scale = min(1.0, target_width / orig_width, target_height / orig_height)
-    new_width = int(orig_width * scale)
-    new_height = int(orig_height * scale)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(out_path, fourcc, desired_fps, (target_width, target_height))
     
-    out = cv2.VideoWriter(out_path, fourcc, fps, (target_width, target_height))
-    
-    while True:
+    frame_count = 0
+    while frame_count < desired_frame_count:
         ret, frame = cap.read()
         if not ret:
+            print("[CMD] No more frames available from the video.")
             break
+        # Downscale if needed
         if scale < 1.0:
             frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
         h, w = frame.shape[:2]
@@ -232,11 +242,17 @@ def auto_crop_video(video_path, target_width, target_height):
             left = (w - target_width) // 2
             top = (h - target_height) // 2
             frame = frame[top:top+target_height, left:left+target_width]
+            print(f"[CMD] Cropped frame {frame_count+1}: left={left}, top={top}")
         else:
             frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+            print(f"[CMD] Resized frame {frame_count+1} to target resolution.")
         out.write(frame)
+        frame_count += 1
     cap.release()
     out.release()
+    print(f"[CMD] Finished processing video. Total frames written: {frame_count}")
+    print(f"[CMD] Set output FPS to {desired_fps}. Final video duration: {frame_count/desired_fps:.2f} seconds.")
+    print(f"[CMD] Output video saved to: {out_path}")
     return out_path
 
 #############################################
@@ -317,7 +333,9 @@ def generate_videos(
             input_image = auto_crop_image(input_image, target_width, target_height)
         if model_choice == "1.3B" and input_video is not None:
             input_video_path = input_video if isinstance(input_video, str) else input_video.name
-            input_video_path = auto_crop_video(input_video_path, target_width, target_height)
+            print(f"[CMD] Auto cropping input video: {input_video_path}")
+            # Use num_frames from user as the desired frame count; FPS set to 16.
+            input_video_path = auto_crop_video(input_video_path, target_width, target_height, int(num_frames), desired_fps=16)
             input_video = input_video_path
 
     # Use the VRAM preset text value directly.
@@ -367,7 +385,7 @@ def generate_videos(
                 except:
                     current_seed = 0
             last_used_seed = current_seed
-            print(f"width: {target_width} : height: {target_height}")
+            print(f"[CMD] Using resolution: width={target_width}  height={target_height}")
 
             # Build common generation parameters
             common_args = {
@@ -391,7 +409,7 @@ def generate_videos(
                     video_data = loaded_pipeline(**common_args)
             elif model_choice == "14B_text":
                 video_data = loaded_pipeline(**common_args)
-            elif model_choice == "14B_image_720p" or model_choice == "14B_image_480p":
+            elif model_choice in ["14B_image_720p", "14B_image_480p"]:
                 if input_image is None:
                     err_msg = "[CMD] Error: Image model selected but no image provided."
                     print(err_msg)
@@ -713,7 +731,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V7 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V8 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
