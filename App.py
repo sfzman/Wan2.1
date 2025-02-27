@@ -326,7 +326,24 @@ def generate_videos(
     
     target_width = int(width)
     target_height = int(height)
-    
+
+    # Compute effective frame count for video-to-video mode (WAN 2.1 1.3B) if input_video is provided.
+    # This ensures that if the input video has fewer frames than the user-specified number,
+    # we use the actual input video frame count.
+    if model_choice == "1.3B" and input_video is not None:
+        original_video_path = input_video if isinstance(input_video, str) else input_video.name
+        cap = cv2.VideoCapture(original_video_path)
+        if cap.isOpened():
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            effective_num_frames = min(int(num_frames), total_frames)
+            print(f"[CMD] Detected input video frame count: {total_frames}, using effective frame count: {effective_num_frames}")
+        else:
+            effective_num_frames = int(num_frames)
+            print("[CMD] Could not open input video to determine frame count, using provided frame count")
+        cap.release()
+    else:
+        effective_num_frames = int(num_frames)
+
     # Auto crop processing if enabled.
     if auto_crop:
         if input_image is not None:
@@ -334,8 +351,7 @@ def generate_videos(
         if model_choice == "1.3B" and input_video is not None:
             input_video_path = input_video if isinstance(input_video, str) else input_video.name
             print(f"[CMD] Auto cropping input video: {input_video_path}")
-            # Use num_frames from user as the desired frame count; FPS set to 16.
-            input_video_path = auto_crop_video(input_video_path, target_width, target_height, int(num_frames), desired_fps=16)
+            input_video_path = auto_crop_video(input_video_path, target_width, target_height, effective_num_frames, desired_fps=16)
             input_video = input_video_path
 
     # Use the VRAM preset text value directly.
@@ -387,7 +403,7 @@ def generate_videos(
             last_used_seed = current_seed
             print(f"[CMD] Using resolution: width={target_width}  height={target_height}")
 
-            # Build common generation parameters
+            # Build common generation parameters using effective_num_frames
             common_args = {
                 "prompt": enhanced_prompt,
                 "negative_prompt": negative_prompt,
@@ -396,13 +412,14 @@ def generate_videos(
                 "tiled": tiled,
                 "width": target_width,
                 "height": target_height,
-                "num_frames": int(num_frames),
+                "num_frames": effective_num_frames,
             }
 
             # Choose pipeline call based on model and inputs.
             if model_choice == "1.3B":
                 if input_video is not None:
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
+                    print(f"[CMD] Processing video-to-video with input video: {input_video_path}")
                     video_obj = VideoData(input_video_path, height=target_height, width=target_width)
                     video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength, **common_args)
                 else:
@@ -731,7 +748,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V8 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V9 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
