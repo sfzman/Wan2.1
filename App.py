@@ -789,7 +789,7 @@ if __name__ == "__main__":
                     num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value="12000000000")
                     torch_dtype_radio = gr.Radio(
                         choices=["torch.float8_e4m3fn", "torch.bfloat16"],
-                        label="Torch DType",
+                        label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage (Not working RTX 5000 Yet)",
                         value="torch.bfloat16"
                     )
                 with gr.Row():
