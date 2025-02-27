@@ -300,13 +300,21 @@ def generate_videos(
     """
     Main generation function now using width and height sliders as final resolution values.
     Also uses the tiled option from the new checkbox and inference steps from the same row.
+    Additionally, if saving prompts is enabled, the generated text file will include extra parameters:
+      - Used model
+      - Number of inference steps
+      - Seed value used
+      - Number of frames used
+      - Denoising strength (only for video-to-video)
+      - Auto crop flag
+      - The generation duration (in seconds and minutes)
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_flag
     cancel_flag = False  # reset cancellation flag at start
     log_text = ""
     last_used_seed = None
     last_video_path = ""
-    start_time = time.time()  # start timer
+    overall_start_time = time.time()  # overall timer
 
     # Determine model type
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
@@ -328,8 +336,6 @@ def generate_videos(
     target_height = int(height)
 
     # Compute effective frame count for video-to-video mode (WAN 2.1 1.3B) if input_video is provided.
-    # This ensures that if the input video has fewer frames than the user-specified number,
-    # we use the actual input video frame count.
     if model_choice == "1.3B" and input_video is not None:
         original_video_path = input_video if isinstance(input_video, str) else input_video.name
         cap = cv2.VideoCapture(original_video_path)
@@ -381,24 +387,28 @@ def generate_videos(
             if cancel_flag:
                 log_text += "[CMD] Generation cancelled by user.\n"
                 print("[CMD] Generation cancelled by user.")
-                duration = time.time() - start_time
+                duration = time.time() - overall_start_time
                 log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                 log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
                 return "", log_text, str(last_used_seed or "")
             iteration += 1
+
+            # Start time for this generation iteration
+            iter_start = time.time()
+
             log_text += f"[CMD] Generating video {iteration} of {total_iterations} with prompt: {p}\n"
             print(f"[CMD] Generating video {iteration}/{total_iterations} with prompt: {p}")
 
-            # Optionally enhance prompt
+            # Optionally enhance prompt (if not already enhanced via separate button)
             enhanced_prompt = p
 
-            # Determine seed
+            # Determine seed for this generation
             if use_random_seed:
                 current_seed = random.randint(0, 2**32 - 1)
             else:
                 try:
                     current_seed = int(seed_input) if seed_input.strip() != "" else 0
-                except:
+                except Exception as e:
                     current_seed = 0
             last_used_seed = current_seed
             print(f"[CMD] Using resolution: width={target_width}  height={target_height}")
@@ -443,20 +453,35 @@ def generate_videos(
             log_text += f"[CMD] Saved video: {video_filename}\n"
             print(f"[CMD] Saved video: {video_filename}")
 
-            # Optionally, save prompt to a text file.
+            # Calculate generation duration for this iteration.
+            iter_duration = time.time() - iter_start
+
+            # Optionally, save prompt and additional parameters to a text file.
             if save_prompt:
                 text_filename = os.path.splitext(video_filename)[0] + ".txt"
+                generation_details = ""
+                generation_details += f"Prompt: {enhanced_prompt}\n"
+                generation_details += f"Used Model: {model_choice_radio}\n"
+                generation_details += f"Number of Inference Steps: {inference_steps}\n"
+                generation_details += f"Seed: {current_seed}\n"
+                generation_details += f"Number of Frames: {effective_num_frames}\n"
+                if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)" and input_video is not None:
+                    generation_details += f"Denoising Strength: {denoising_strength}\n"
+                else:
+                    generation_details += "Denoising Strength: N/A\n"
+                generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
+                generation_details += f"Generation Duration: {iter_duration:.2f} seconds / {(iter_duration/60):.2f} minutes\n"
                 with open(text_filename, "w", encoding="utf-8") as f:
-                    f.write(enhanced_prompt)
-                log_text += f"[CMD] Saved prompt: {text_filename}\n"
-                print(f"[CMD] Saved prompt: {text_filename}")
+                    f.write(generation_details)
+                log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
+                print(f"[CMD] Saved prompt and parameters: {text_filename}")
 
             last_video_path = video_filename
 
-    duration = time.time() - start_time
+    overall_duration = time.time() - overall_start_time
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
-    log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-    print(f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}")
+    log_text += f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds ({overall_duration/60:.2f} minutes). Last used seed: {last_used_seed}\n"
+    print(f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds. Last used seed: {last_used_seed}")
     return last_video_path, log_text, str(last_used_seed or "")
 
 def cancel_generation():
@@ -559,7 +584,7 @@ def batch_process_videos(
         else:
             try:
                 current_seed = int(seed_input) if seed_input.strip() != "" else 0
-            except:
+            except Exception as e:
                 current_seed = 0
 
         common_args = common_args_base.copy()
@@ -748,7 +773,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V10 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V11 : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -869,7 +894,7 @@ if __name__ == "__main__":
             inputs=[aspect_ratio_radio, model_choice_radio],
             outputs=[width_slider, height_slider]
         )
-        # New binding: update VRAM value every time the GPU VRAM Preset changes.
+        # Update VRAM value every time the GPU VRAM Preset changes.
         vram_preset_radio.change(
             fn=update_vram_on_change,
             inputs=[vram_preset_radio, model_choice_radio],
