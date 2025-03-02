@@ -837,7 +837,7 @@ if __name__ == "__main__":
                 with gr.Row():
                     tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value="EN")
                     enhance_button = gr.Button("Prompt Enhance")
-                negative_prompt = gr.Textbox(label="Negative Prompt", placeholder="Enter negative prompt", lines=2)
+                negative_prompt = gr.Textbox(label="Negative Prompt",value="still and motionless picture, static", placeholder="Enter negative prompt", lines=2)
                 with gr.Row():
                     save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=True)
                     multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=False)
