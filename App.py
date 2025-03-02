@@ -295,19 +295,17 @@ def generate_videos(
     prompt, tar_lang, negative_prompt, input_image, input_video, denoising_strength, num_generations,
     save_prompt, multi_line, use_random_seed, seed_input, quality, fps,
     model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
-    aspect_ratio, width, height, auto_crop, tiled, inference_steps
+    aspect_ratio, width, height, auto_crop, tiled, inference_steps, pr_rife_enabled, pr_rife_multiplier, cfg_scale, sigma_shift
 ):
     """
     Main generation function now using width and height sliders as final resolution values.
     Also uses the tiled option from the new checkbox and inference steps from the same row.
-    Additionally, if saving prompts is enabled, the generated text file will include extra parameters:
-      - Used model
-      - Number of inference steps
-      - Seed value used
-      - Number of frames used
-      - Denoising strength (only for video-to-video)
-      - Auto crop flag
-      - The generation duration (in seconds and minutes)
+    Additionally, if saving prompts is enabled, the generated text file will include extra parameters.
+    
+    pr_rife_enabled: boolean indicating if Practical-RIFE enhancement should be applied.
+    pr_rife_multiplier: string ("2x FPS" or "4x FPS") indicating the FPS multiplier.
+
+    The new parameters 'cfg_scale' and 'sigma_shift' are added and will be passed in common_args.
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_flag
     cancel_flag = False  # reset cancellation flag at start
@@ -423,6 +421,8 @@ def generate_videos(
                 "width": target_width,
                 "height": target_height,
                 "num_frames": effective_num_frames,
+                "cfg_scale": cfg_scale,
+                "sigma_shift": sigma_shift,
             }
 
             # Choose pipeline call based on model and inputs.
@@ -477,6 +477,20 @@ def generate_videos(
                 print(f"[CMD] Saved prompt and parameters: {text_filename}")
 
             last_video_path = video_filename
+
+    # Apply Practical-RIFE enhancement if enabled.
+    if pr_rife_enabled and last_video_path:
+        print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_multiplier} on video {last_video_path}")
+        multiplier_val = "2" if pr_rife_multiplier == "2x FPS" else "4"
+        improved_video = os.path.join("outputs", "improved_" + os.path.basename(last_video_path))
+        # Provide the modelDir argument with an absolute path.
+        model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+        cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{last_video_path}" --output="{improved_video}"'
+        print(f"[CMD] Running command: {cmd}")
+        subprocess.run(cmd, shell=True, check=True)
+        print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
+        last_video_path = improved_video
+        log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
     overall_duration = time.time() - overall_start_time
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
@@ -773,7 +787,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V11 : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V12 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -791,7 +805,7 @@ if __name__ == "__main__":
                         value="WAN 2.1 1.3B (Text/Video-to-Video)"
                     )
                     vram_preset_radio = gr.Radio(
-                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB","32GB", "48GB", "80GB"],
+                        choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "32GB", "48GB", "80GB"],
                         label="GPU VRAM Preset",
                         value="24GB"
                     )
@@ -802,13 +816,20 @@ if __name__ == "__main__":
                         label="Aspect Ratio",
                         value="16:9"
                     )
-                # New combined row: width, height, auto crop, tiled and inference steps.
+                # Combined row: width, height, auto crop, tiled and inference steps.
                 with gr.Row():
                     width_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=832, label="Width")
                     height_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=480, label="Height")
                     auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=True)
                     tiled_checkbox = gr.Checkbox(label="Tiled VAE Decode (Disable for 1.3B model for 12GB or more GPUs)", value=True)
                     inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=50, label="Inference Steps")
+                # New Practical-RIFE options and new CFG Scale & Sigma Shift sliders.
+                gr.Markdown("### Increase Video FPS with Practical-RIFE")
+                with gr.Row():
+                    pr_rife_checkbox = gr.Checkbox(label="Apply Practical-RIFE", value=True)
+                    pr_rife_radio = gr.Radio(choices=["2x FPS", "4x FPS"], label="FPS Multiplier", value="2x FPS")
+                    cfg_scale_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=6.0, label="CFG Scale")
+                    sigma_shift_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=6.0, label="Sigma Shift")
                 gr.Markdown("### GPU Settings")
                 with gr.Row():
                     num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value="12000000000")
@@ -867,7 +888,8 @@ if __name__ == "__main__":
                 quality_slider, fps_slider,
                 model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
                 num_frames_slider,
-                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, tiled_checkbox, inference_steps_slider
+                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, tiled_checkbox, inference_steps_slider,
+                pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider
             ],
             outputs=[video_output, status_output, last_seed_output]
         )

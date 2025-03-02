@@ -313,7 +313,7 @@ class QwenPromptExpander(PromptExpander):
         super().__init__(model_name, is_vl, device, **kwargs)
         if (not os.path.exists(self.model_name)) and (self.model_name in self.model_dict):
             self.model_name = self.model_dict[self.model_name]
-
+        print(self.model_name)
         if self.is_vl:
             from transformers import (AutoProcessor, AutoTokenizer, BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration)
             try:
