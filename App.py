@@ -250,16 +250,11 @@ def auto_crop_video(video_path, target_width, target_height, desired_frame_count
 def prompt_enc(prompt, tar_lang):
     """
     Enhances the prompt using the prompt expander model.
-    Before enhancing, the loaded WAN pipeline (if any) is cleared to free VRAM.
-    After enhancement, the prompt expander is cleared so that the WAN pipeline will reload on video generation.
+    Uses the in-memory prompt expander if already loaded and does not deload the WAN pipeline.
     """
     global prompt_expander, loaded_pipeline, loaded_pipeline_config, args
 
-    if loaded_pipeline is not None:
-        print("[CMD] Clearing loaded WAN pipeline before prompt enhancement.")
-        loaded_pipeline = None
-        loaded_pipeline_config = {}
-
+    # Do not clear the WAN pipeline here.
     if prompt_expander is None:
         if args.prompt_extend_method == "dashscope":
             prompt_expander = DashScopePromptExpander(model_name=args.prompt_extend_model, is_vl=False)
@@ -270,8 +265,7 @@ def prompt_enc(prompt, tar_lang):
     prompt_output = prompt_expander(prompt, tar_lang=tar_lang.lower())
     result = prompt if not prompt_output.status else prompt_output.prompt
 
-    prompt_expander = None
-
+    # Keep prompt_expander in memory for subsequent prompt enhancements.
     return result
 
 def generate_videos(
@@ -365,6 +359,9 @@ def generate_videos(
                 duration = time.time() - overall_start_time
                 log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                 log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
+                # Unload video generation pipeline to free VRAM after generation.
+                loaded_pipeline = None
+                loaded_pipeline_config = {}
                 return "", log_text, str(last_used_seed or "")
             iteration += 1
 
@@ -412,11 +409,17 @@ def generate_videos(
                 if input_image is None:
                     err_msg = "[CMD] Error: Image model selected but no image provided."
                     print(err_msg)
+                    # Unload pipeline before returning error.
+                    loaded_pipeline = None
+                    loaded_pipeline_config = {}
                     return "", err_msg, str(last_used_seed or "")
                 video_data = loaded_pipeline(input_image=input_image, **common_args)
             else:
                 err_msg = "[CMD] Invalid combination of inputs."
                 print(err_msg)
+                # Unload pipeline before returning error.
+                loaded_pipeline = None
+                loaded_pipeline_config = {}
                 return "", err_msg, str(last_used_seed or "")
 
             video_filename = get_next_filename(".mp4")
@@ -464,6 +467,11 @@ def generate_videos(
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
     log_text += f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds ({overall_duration/60:.2f} minutes). Last used seed: {last_used_seed}\n"
     print(f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds. Last used seed: {last_used_seed}")
+
+    # Unload video generation pipeline to free VRAM after video generation.
+    loaded_pipeline = None
+    loaded_pipeline_config = {}
+
     return last_video_path, log_text, str(last_used_seed or "")
 
 def cancel_generation():
@@ -624,6 +632,10 @@ def batch_process_videos(
             print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
             log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
+    # Unload video generation pipeline to free VRAM after batch processing.
+    loaded_pipeline = None
+    loaded_pipeline_config = {}
+
     return log_text
 
 def cancel_batch_process():
@@ -761,6 +773,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
     return pipe
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser()
     # Prompt Enhance arguments
     parser.add_argument("--prompt_extend_method", type=str, default="local_qwen", choices=["dashscope", "local_qwen"],
