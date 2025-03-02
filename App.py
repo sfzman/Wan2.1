@@ -478,11 +478,13 @@ def batch_process_videos(
     folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
     torch_dtype, num_frames, inference_steps, aspect_ratio, width, height, auto_crop,
-    pr_rife_enabled, pr_rife_radio
+    save_prompt, pr_rife_enabled, pr_rife_radio
 ):
     """
     Processes a folder of images for image-to-video generation in batch using width and height as resolution.
     Applies Practical-RIFE if enabled.
+    Additionally, if saving prompt parameters is enabled, a text file with the generation details
+    is saved alongside each generated video.
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
     cancel_batch_flag = False  # reset cancellation flag for batch process
@@ -539,6 +541,7 @@ def batch_process_videos(
             print("[CMD] Batch processing cancelled by user.")
             break
 
+        iter_start = time.time()
         base, ext = os.path.splitext(image_file)
         prompt_path = os.path.join(folder_path, base + ".txt")
         if not os.path.exists(prompt_path):
@@ -552,7 +555,7 @@ def batch_process_videos(
             log_text += f"[CMD] Prompt file {base + '.txt'} is empty, skipping {image_file}.\n"
             print(f"[CMD] Prompt file {base + '.txt'} is empty, skipping {image_file}.")
             continue
-
+        
         output_filename = os.path.join(batch_output_folder, base + ".mp4")
         if skip_overwrite and os.path.exists(output_filename):
             log_text += f"[CMD] Output video {output_filename} already exists, skipping {image_file} due to skip overwrite.\n"
@@ -589,6 +592,23 @@ def batch_process_videos(
         save_video(video_data, output_filename, fps=fps, quality=quality)
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
         print(f"[CMD] Saved batch generated video: {output_filename}")
+        
+        generation_duration = time.time() - iter_start
+        if save_prompt:
+            text_filename = os.path.splitext(output_filename)[0] + ".txt"
+            generation_details = ""
+            generation_details += f"Prompt: {prompt_content}\n"
+            generation_details += f"Used Model: {model_choice_radio}\n"
+            generation_details += f"Number of Inference Steps: {inference_steps}\n"
+            generation_details += f"Seed: {current_seed}\n"
+            generation_details += f"Number of Frames: {num_frames}\n"
+            generation_details += f"Denoising Strength: {denoising_strength}\n"
+            generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
+            generation_details += f"Generation Duration: {generation_duration:.2f} seconds / {(generation_duration/60):.2f} minutes\n"
+            with open(text_filename, "w", encoding="utf-8") as f:
+                f.write(generation_details)
+            log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
+            print(f"[CMD] Saved prompt and parameters: {text_filename}")
 
         # Apply Practical-RIFE if enabled
         if pr_rife_enabled:
@@ -838,7 +858,9 @@ if __name__ == "__main__":
                 gr.Markdown("### Batch Image-to-Video Processing")
                 batch_folder_input = gr.Textbox(label="Input Folder for Batch Processing", placeholder="Enter input folder path", value="batch_inputs")
                 batch_output_folder_input = gr.Textbox(label="Batch Processing Outputs Folder", placeholder="Enter batch outputs folder path", value="batch_outputs")
-                skip_overwrite_checkbox = gr.Checkbox(label="Skip Overwrite if Output Exists", value=True)
+                with gr.Row():
+                    skip_overwrite_checkbox = gr.Checkbox(label="Skip Overwrite if Output Exists", value=True)
+                    save_prompt_batch_checkbox = gr.Checkbox(label="Save prompt to file (Batch)", value=True)
                 with gr.Row():
                     batch_process_button = gr.Button("Batch Process")
                     cancel_batch_process_button = gr.Button("Cancel Batch Process")
@@ -867,11 +889,29 @@ if __name__ == "__main__":
         batch_process_button.click(
             fn=batch_process_videos,
             inputs=[
-                batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, tar_lang, negative_prompt, denoising_slider,
-                use_random_seed_checkbox, seed_input, quality_slider, fps_slider, model_choice_radio, vram_preset_radio, num_persistent_text,
-                torch_dtype_radio, num_frames_slider, inference_steps_slider,
-                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox,
-                pr_rife_checkbox, pr_rife_radio
+                batch_folder_input, 
+                batch_output_folder_input, 
+                skip_overwrite_checkbox, 
+                tar_lang, 
+                negative_prompt, 
+                denoising_slider,
+                use_random_seed_checkbox, 
+                seed_input, 
+                quality_slider, 
+                fps_slider, 
+                model_choice_radio, 
+                vram_preset_radio, 
+                num_persistent_text,
+                torch_dtype_radio, 
+                num_frames_slider, 
+                inference_steps_slider,
+                aspect_ratio_radio, 
+                width_slider, 
+                height_slider, 
+                auto_crop_checkbox,
+                save_prompt_batch_checkbox,
+                pr_rife_checkbox, 
+                pr_rife_radio
             ],
             outputs=batch_status_output
         )
