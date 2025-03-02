@@ -9,21 +9,16 @@ import tempfile
 import torch
 import gradio as gr
 from PIL import Image
-import cv2  # for video processing
+import cv2
 
-# Import WAN prompt extend components
 import wan
 from wan.configs import MAX_AREA_CONFIGS, WAN_CONFIGS
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_video
 
-# Import DiffSynth and related video generation components
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
-#############################################
-# Global Aspect Ratio Dictionaries
-#############################################
 ASPECT_RATIOS_1_3b = {
     "1:1":  (640, 640),
     "4:3":  (736, 544),
@@ -54,9 +49,6 @@ ASPECT_RATIOS_14b = {
     "5:4":  (1072, 864),
 }
 
-#############################################
-# GPU VRAM and Resolution Update Functions
-#############################################
 def update_vram_and_resolution(model_choice, preset):
     """
     Determines the VRAM numerical mapping and returns the list of available aspect ratios as defined by the relevant dictionary.
@@ -255,9 +247,6 @@ def auto_crop_video(video_path, target_width, target_height, desired_frame_count
     print(f"[CMD] Output video saved to: {out_path}")
     return out_path
 
-#############################################
-# Prompt Enhance Function
-#############################################
 def prompt_enc(prompt, tar_lang):
     """
     Enhances the prompt using the prompt expander model.
@@ -266,13 +255,11 @@ def prompt_enc(prompt, tar_lang):
     """
     global prompt_expander, loaded_pipeline, loaded_pipeline_config, args
 
-    # Clear the WAN pipeline before running prompt enhancement (free VRAM)
     if loaded_pipeline is not None:
         print("[CMD] Clearing loaded WAN pipeline before prompt enhancement.")
         loaded_pipeline = None
         loaded_pipeline_config = {}
 
-    # Load the prompt expander if needed
     if prompt_expander is None:
         if args.prompt_extend_method == "dashscope":
             prompt_expander = DashScopePromptExpander(model_name=args.prompt_extend_model, is_vl=False)
@@ -283,19 +270,15 @@ def prompt_enc(prompt, tar_lang):
     prompt_output = prompt_expander(prompt, tar_lang=tar_lang.lower())
     result = prompt if not prompt_output.status else prompt_output.prompt
 
-    # Clear the prompt expander after using it to ensure reloading later
     prompt_expander = None
 
     return result
 
-#############################################
-# Main Generation Function
-#############################################
 def generate_videos(
     prompt, tar_lang, negative_prompt, input_image, input_video, denoising_strength, num_generations,
     save_prompt, multi_line, use_random_seed, seed_input, quality, fps,
     model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
-    aspect_ratio, width, height, auto_crop, tiled, inference_steps, pr_rife_enabled, pr_rife_multiplier, cfg_scale, sigma_shift
+    aspect_ratio, width, height, auto_crop, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift
 ):
     """
     Main generation function now using width and height sliders as final resolution values.
@@ -303,7 +286,7 @@ def generate_videos(
     Additionally, if saving prompts is enabled, the generated text file will include extra parameters.
     
     pr_rife_enabled: boolean indicating if Practical-RIFE enhancement should be applied.
-    pr_rife_multiplier: string ("2x FPS" or "4x FPS") indicating the FPS multiplier.
+    pr_rife_radio: string ("2x FPS" or "4x FPS") indicating the FPS multiplier.
 
     The new parameters 'cfg_scale' and 'sigma_shift' are added and will be passed in common_args.
     """
@@ -314,7 +297,6 @@ def generate_videos(
     last_video_path = ""
     overall_start_time = time.time()  # overall timer
 
-    # Determine model type
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
         model_choice = "1.3B"
         d = ASPECT_RATIOS_1_3b
@@ -333,7 +315,6 @@ def generate_videos(
     target_width = int(width)
     target_height = int(height)
 
-    # Compute effective frame count for video-to-video mode (WAN 2.1 1.3B) if input_video is provided.
     if model_choice == "1.3B" and input_video is not None:
         original_video_path = input_video if isinstance(input_video, str) else input_video.name
         cap = cv2.VideoCapture(original_video_path)
@@ -348,7 +329,6 @@ def generate_videos(
     else:
         effective_num_frames = int(num_frames)
 
-    # Auto crop processing if enabled.
     if auto_crop:
         if input_image is not None:
             input_image = auto_crop_image(input_image, target_width, target_height)
@@ -358,10 +338,8 @@ def generate_videos(
             input_video_path = auto_crop_video(input_video_path, target_width, target_height, effective_num_frames, desired_fps=16)
             input_video = input_video_path
 
-    # Use the VRAM preset text value directly.
     vram_value = num_persistent_input
 
-    # Load the pipeline if not already loaded or if configuration has changed.
     current_config = {
         "model_choice": model_choice,
         "torch_dtype": torch_dtype,
@@ -371,7 +349,6 @@ def generate_videos(
         loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value)
         loaded_pipeline_config = current_config
 
-    # Prepare prompts list
     if multi_line:
         prompts_list = [line.strip() for line in prompt.splitlines() if line.strip()]
     else:
@@ -391,16 +368,13 @@ def generate_videos(
                 return "", log_text, str(last_used_seed or "")
             iteration += 1
 
-            # Start time for this generation iteration
             iter_start = time.time()
 
             log_text += f"[CMD] Generating video {iteration} of {total_iterations} with prompt: {p}\n"
             print(f"[CMD] Generating video {iteration}/{total_iterations} with prompt: {p}")
 
-            # Optionally enhance prompt (if not already enhanced via separate button)
             enhanced_prompt = p
 
-            # Determine seed for this generation
             if use_random_seed:
                 current_seed = random.randint(0, 2**32 - 1)
             else:
@@ -411,7 +385,6 @@ def generate_videos(
             last_used_seed = current_seed
             print(f"[CMD] Using resolution: width={target_width}  height={target_height}")
 
-            # Build common generation parameters using effective_num_frames
             common_args = {
                 "prompt": enhanced_prompt,
                 "negative_prompt": negative_prompt,
@@ -425,7 +398,6 @@ def generate_videos(
                 "sigma_shift": sigma_shift,
             }
 
-            # Choose pipeline call based on model and inputs.
             if model_choice == "1.3B":
                 if input_video is not None:
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
@@ -447,16 +419,13 @@ def generate_videos(
                 print(err_msg)
                 return "", err_msg, str(last_used_seed or "")
 
-            # Save the generated video.
             video_filename = get_next_filename(".mp4")
             save_video(video_data, video_filename, fps=fps, quality=quality)
             log_text += f"[CMD] Saved video: {video_filename}\n"
             print(f"[CMD] Saved video: {video_filename}")
 
-            # Calculate generation duration for this iteration.
             iter_duration = time.time() - iter_start
 
-            # Optionally, save prompt and additional parameters to a text file.
             if save_prompt:
                 text_filename = os.path.splitext(video_filename)[0] + ".txt"
                 generation_details = ""
@@ -478,12 +447,10 @@ def generate_videos(
 
             last_video_path = video_filename
 
-    # Apply Practical-RIFE enhancement if enabled.
     if pr_rife_enabled and last_video_path:
-        print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_multiplier} on video {last_video_path}")
-        multiplier_val = "2" if pr_rife_multiplier == "2x FPS" else "4"
+        print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {last_video_path}")
+        multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
         improved_video = os.path.join("outputs", "improved_" + os.path.basename(last_video_path))
-        # Provide the modelDir argument with an absolute path.
         model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
         cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{last_video_path}" --output="{improved_video}"'
         print(f"[CMD] Running command: {cmd}")
@@ -507,16 +474,15 @@ def cancel_generation():
     print("[CMD] Cancel button pressed.")
     return "Cancelling generation..."
 
-#############################################
-# Batch Image-to-Video Processing Functionality
-#############################################
 def batch_process_videos(
     folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
-    torch_dtype, num_frames, inference_steps, aspect_ratio, width, height, auto_crop
+    torch_dtype, num_frames, inference_steps, aspect_ratio, width, height, auto_crop,
+    pr_rife_enabled, pr_rife_radio
 ):
     """
     Processes a folder of images for image-to-video generation in batch using width and height as resolution.
+    Applies Practical-RIFE if enabled.
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
     cancel_batch_flag = False  # reset cancellation flag for batch process
@@ -624,6 +590,18 @@ def batch_process_videos(
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
         print(f"[CMD] Saved batch generated video: {output_filename}")
 
+        # Apply Practical-RIFE if enabled
+        if pr_rife_enabled:
+            print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {output_filename}")
+            multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+            improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
+            model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+            cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{output_filename}" --output="{improved_video}"'
+            print(f"[CMD] Running command: {cmd}")
+            subprocess.run(cmd, shell=True, check=True)
+            print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
+            log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+
     return log_text
 
 def cancel_batch_process():
@@ -635,9 +613,6 @@ def cancel_batch_process():
     print("[CMD] Batch process cancel button pressed.")
     return "Cancelling batch process..."
 
-#############################################
-# Helper Functions for File Management
-#############################################
 def get_next_filename(extension):
     """
     Returns the next available file path under the "outputs" folder.
@@ -670,9 +645,6 @@ def open_outputs_folder():
         print("[CMD] Opening folder not supported on this OS.")
     return f"Opened {outputs_dir}"
 
-#############################################
-# Model Pipeline Loader
-#############################################
 def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
     """
     Loads the appropriate WAN pipeline based on:
@@ -766,9 +738,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
     print("[CMD] Model loaded successfully.")
     return pipe
 
-#############################################
-# Gradio Interface
-#############################################
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Prompt Enhance arguments
@@ -787,7 +756,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V12 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V13 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -901,7 +870,8 @@ if __name__ == "__main__":
                 batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, tar_lang, negative_prompt, denoising_slider,
                 use_random_seed_checkbox, seed_input, quality_slider, fps_slider, model_choice_radio, vram_preset_radio, num_persistent_text,
                 torch_dtype_radio, num_frames_slider, inference_steps_slider,
-                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox
+                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox,
+                pr_rife_checkbox, pr_rife_radio
             ],
             outputs=batch_status_output
         )
