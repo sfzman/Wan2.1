@@ -171,21 +171,31 @@ def update_vram_on_change(preset, model_choice):
 #############################################
 def auto_crop_image(image, target_width, target_height):
     """
-    Downscales the image if it is larger than the target dimensions while preserving the aspect ratio,
-    then center-crops to the target resolution.
+    Crops and downscales the image to exactly the target resolution.
+    
+    The function first crops the image centrally to match the target aspect ratio,
+    then resizes it to the target dimensions.
     """
     w, h = image.size
-    # Downscale if larger than target
-    if w > target_width or h > target_height:
-        scale = min(target_width / w, target_height / h)
-        new_size = (int(w * scale), int(h * scale))
-        image = image.resize(new_size, Image.LANCZOS)
-    # Center crop if still larger than target
-    w, h = image.size
-    if w >= target_width and h >= target_height:
-        left = (w - target_width) // 2
-        top = (h - target_height) // 2
-        image = image.crop((left, top, left + target_width, top + target_height))
+    target_ratio = target_width / target_height
+    current_ratio = w / h
+
+    # Crop the image to the desired aspect ratio.
+    if current_ratio > target_ratio:
+        # Image is too wide: crop the left and right.
+        new_width = int(h * target_ratio)
+        left = (w - new_width) // 2
+        right = left + new_width
+        image = image.crop((left, 0, right, h))
+    elif current_ratio < target_ratio:
+        # Image is too tall: crop the top and bottom.
+        new_height = int(w / target_ratio)
+        top = (h - new_height) // 2
+        bottom = top + new_height
+        image = image.crop((0, top, w, bottom))
+
+    # Resize to the target resolution.
+    image = image.resize((target_width, target_height), Image.LANCZOS)
     return image
 
 def auto_crop_video(video_path, target_width, target_height, desired_frame_count, desired_fps=16):
@@ -226,7 +236,7 @@ def auto_crop_video(video_path, target_width, target_height, desired_frame_count
         if not ret:
             print("[CMD] No more frames available from the video.")
             break
-        # Downscale if needed
+        # Downscale if needed.
         if scale < 1.0:
             frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
         h, w = frame.shape[:2]
@@ -281,8 +291,12 @@ def generate_videos(
     
     pr_rife_enabled: boolean indicating if Practical-RIFE enhancement should be applied.
     pr_rife_radio: string ("2x FPS" or "4x FPS") indicating the FPS multiplier.
-
+    
     The new parameters 'cfg_scale' and 'sigma_shift' are added and will be passed in common_args.
+    
+    IMPORTANT: For image-to-video models, if auto_crop is enabled, the image is auto processed and saved
+    in the folder "auto_pre_processed_images" immediately (before starting video generation) with the same
+    base name as the final video output.
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_flag
     cancel_flag = False  # reset cancellation flag at start
@@ -309,6 +323,7 @@ def generate_videos(
     target_width = int(width)
     target_height = int(height)
 
+    # Process video input if applicable.
     if model_choice == "1.3B" and input_video is not None:
         original_video_path = input_video if isinstance(input_video, str) else input_video.name
         cap = cv2.VideoCapture(original_video_path)
@@ -323,14 +338,19 @@ def generate_videos(
     else:
         effective_num_frames = int(num_frames)
 
+    # Pre-process based on auto_crop and input type.
     if auto_crop:
-        if input_image is not None:
-            input_image = auto_crop_image(input_image, target_width, target_height)
         if model_choice == "1.3B" and input_video is not None:
             input_video_path = input_video if isinstance(input_video, str) else input_video.name
             print(f"[CMD] Auto cropping input video: {input_video_path}")
             input_video_path = auto_crop_video(input_video_path, target_width, target_height, effective_num_frames, desired_fps=16)
             input_video = input_video_path
+        elif input_image is not None and model_choice in ["14B_image_720p", "14B_image_480p"]:
+            # For image-to-video models, keep a copy of the original image to process per iteration.
+            original_image = input_image.copy()
+    else:
+        if input_image is not None:
+            original_image = input_image.copy()
 
     vram_value = num_persistent_input
 
@@ -359,7 +379,6 @@ def generate_videos(
                 duration = time.time() - overall_start_time
                 log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                 log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-                # Unload video generation pipeline to free VRAM after generation.
                 loaded_pipeline = None
                 loaded_pipeline_config = {}
                 return "", log_text, str(last_used_seed or "")
@@ -370,6 +389,7 @@ def generate_videos(
             log_text += f"[CMD] Generating video {iteration} of {total_iterations} with prompt: {p}\n"
             print(f"[CMD] Generating video {iteration}/{total_iterations} with prompt: {p}")
 
+            # Optionally enhance prompt.
             enhanced_prompt = p
 
             if use_random_seed:
@@ -395,6 +415,7 @@ def generate_videos(
                 "sigma_shift": sigma_shift,
             }
 
+            # Choose branch according to model type.
             if model_choice == "1.3B":
                 if input_video is not None:
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
@@ -403,31 +424,43 @@ def generate_videos(
                     video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength, **common_args)
                 else:
                     video_data = loaded_pipeline(**common_args)
+                video_filename = get_next_filename(".mp4")
             elif model_choice == "14B_text":
                 video_data = loaded_pipeline(**common_args)
+                video_filename = get_next_filename(".mp4")
             elif model_choice in ["14B_image_720p", "14B_image_480p"]:
                 if input_image is None:
                     err_msg = "[CMD] Error: Image model selected but no image provided."
                     print(err_msg)
-                    # Unload pipeline before returning error.
                     loaded_pipeline = None
                     loaded_pipeline_config = {}
                     return "", err_msg, str(last_used_seed or "")
-                video_data = loaded_pipeline(input_image=input_image, **common_args)
+                # For image-to-video, process the image *per iteration* so that we can save the preprocessed image
+                if auto_crop:
+                    processed_image = auto_crop_image(original_image, target_width, target_height)
+                else:
+                    processed_image = original_image
+                video_filename = get_next_filename(".mp4")
+                # Save preprocessed image BEFORE generating the video.
+                preprocessed_folder = "auto_pre_processed_images"
+                if not os.path.exists(preprocessed_folder):
+                    os.makedirs(preprocessed_folder)
+                base_name = os.path.splitext(os.path.basename(video_filename))[0]
+                preprocessed_image_filename = os.path.join(preprocessed_folder, f"{base_name}.png")
+                processed_image.save(preprocessed_image_filename)
+                log_text += f"[CMD] Saved auto processed image: {preprocessed_image_filename}\n"
+                print(f"[CMD] Saved auto processed image: {preprocessed_image_filename}")
+                video_data = loaded_pipeline(input_image=processed_image, **common_args)
             else:
                 err_msg = "[CMD] Invalid combination of inputs."
                 print(err_msg)
-                # Unload pipeline before returning error.
                 loaded_pipeline = None
                 loaded_pipeline_config = {}
                 return "", err_msg, str(last_used_seed or "")
 
-            video_filename = get_next_filename(".mp4")
             save_video(video_data, video_filename, fps=fps, quality=quality)
             log_text += f"[CMD] Saved video: {video_filename}\n"
             print(f"[CMD] Saved video: {video_filename}")
-
-            iter_duration = time.time() - iter_start
 
             if save_prompt:
                 text_filename = os.path.splitext(video_filename)[0] + ".txt"
@@ -443,7 +476,7 @@ def generate_videos(
                 else:
                     generation_details += "Denoising Strength: N/A\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
-                generation_details += f"Generation Duration: {iter_duration:.2f} seconds / {(iter_duration/60):.2f} minutes\n"
+                generation_details += f"Generation Duration: {time.time()-iter_start:.2f} seconds / {(time.time()-iter_start)/60:.2f} minutes\n"
                 with open(text_filename, "w", encoding="utf-8") as f:
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
@@ -468,7 +501,6 @@ def generate_videos(
     log_text += f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds ({overall_duration/60:.2f} minutes). Last used seed: {last_used_seed}\n"
     print(f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds. Last used seed: {last_used_seed}")
 
-    # Unload video generation pipeline to free VRAM after video generation.
     loaded_pipeline = None
     loaded_pipeline_config = {}
 
@@ -499,7 +531,6 @@ def batch_process_videos(
     cancel_batch_flag = False  # reset cancellation flag for batch process
     log_text = ""
     
-    # Ensure batch processing is run only with one of the Image-to-Video models.
     if model_choice_radio not in ["WAN 2.1 14B Image-to-Video 720P", "WAN 2.1 14B Image-to-Video 480P"]:
         log_text += "[CMD] Batch processing currently only supports the WAN 2.1 14B Image-to-Video models.\n"
         return log_text
@@ -595,12 +626,25 @@ def batch_process_videos(
             continue
 
         if auto_crop:
-            image_obj = auto_crop_image(image_obj, target_width, target_height)
+            processed_image = auto_crop_image(image_obj, target_width, target_height)
+        else:
+            processed_image = image_obj
             
-        video_data = loaded_pipeline(input_image=image_obj, **common_args)
+        video_data = loaded_pipeline(input_image=processed_image, **common_args)
         save_video(video_data, output_filename, fps=fps, quality=quality)
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
         print(f"[CMD] Saved batch generated video: {output_filename}")
+
+        # Save the preprocessed image BEFORE video generation is complete.
+        if auto_crop:
+            preprocessed_folder = "auto_pre_processed_images"
+            if not os.path.exists(preprocessed_folder):
+                os.makedirs(preprocessed_folder)
+            base_name = os.path.splitext(os.path.basename(output_filename))[0]
+            preprocessed_image_filename = os.path.join(preprocessed_folder, f"{base_name}.png")
+            processed_image.save(preprocessed_image_filename)
+            log_text += f"[CMD] Saved auto processed image: {preprocessed_image_filename}\n"
+            print(f"[CMD] Saved auto processed image: {preprocessed_image_filename}")
         
         generation_duration = time.time() - iter_start
         if save_prompt:
@@ -620,7 +664,6 @@ def batch_process_videos(
             log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
             print(f"[CMD] Saved prompt and parameters: {text_filename}")
 
-        # Apply Practical-RIFE if enabled
         if pr_rife_enabled:
             print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {output_filename}")
             multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
@@ -632,7 +675,6 @@ def batch_process_videos(
             print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
             log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
-    # Unload video generation pipeline to free VRAM after batch processing.
     loaded_pipeline = None
     loaded_pipeline_config = {}
 
@@ -791,7 +833,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V13 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V14 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -941,7 +983,6 @@ if __name__ == "__main__":
             inputs=[aspect_ratio_radio, model_choice_radio],
             outputs=[width_slider, height_slider]
         )
-        # Update VRAM value every time the GPU VRAM Preset changes.
         vram_preset_radio.change(
             fn=update_vram_on_change,
             inputs=[vram_preset_radio, model_choice_radio],

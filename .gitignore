@@ -12,6 +12,7 @@
 *.zip
 *.pt
 *.pth
+auto_pre_processed_images
 *.ckpt
 *.safetensors
 *.json
