@@ -29,6 +29,8 @@ venv
 __pycache__/
 storage/
 samples/
+wan_2_1_all_models.z01
+__rzi_23488.17853.rartemp
 !.gitignore
 !requirements.txt
 .DS_Store

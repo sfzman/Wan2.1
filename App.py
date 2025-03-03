@@ -505,6 +505,11 @@ def generate_videos(
                     generation_details += f"Denoising Strength: {denoising_strength}\n"
                 else:
                     generation_details += "Denoising Strength: N/A\n"
+                # Log LoRA usage
+                if lora_model and lora_model != "None":
+                    generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
+                else:
+                    generation_details += "LoRA Model: None\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
                 generation_details += f"Generation Duration: {time.time()-iter_start:.2f} seconds / {(time.time()-iter_start)/60:.2f} minutes\n"
                 with open(text_filename, "w", encoding="utf-8") as f:
@@ -548,21 +553,27 @@ def cancel_generation():
 
 
 def batch_process_videos(
-    folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
+    default_prompt, folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
     torch_dtype, num_frames, inference_steps, aspect_ratio, width, height, auto_crop,
-    save_prompt, pr_rife_enabled, pr_rife_radio
+    save_prompt, pr_rife_enabled, pr_rife_radio, lora_model, lora_alpha
 ):
     """
     Processes a folder of images for image-to-video generation in batch using width and height as resolution.
     Applies Practical-RIFE if enabled.
     Additionally, if saving prompt parameters is enabled, a text file with the generation details
     is saved alongside each generated video.
+
+    Now, if a prompt text file is not found for an image, the default user entered prompt (from the regular prompt box)
+    is used instead and a corresponding message is printed on cmd.
+
+    LoRA settings are also logged.
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
     cancel_batch_flag = False  # reset cancellation flag for batch process
     log_text = ""
     
+    # For batch processing, we expect only the image-to-video models.
     if model_choice_radio not in ["WAN 2.1 14B Image-to-Video 720P", "WAN 2.1 14B Image-to-Video 480P"]:
         log_text += "[CMD] Batch processing currently only supports the WAN 2.1 14B Image-to-Video models.\n"
         return log_text
@@ -575,14 +586,25 @@ def batch_process_videos(
         model_choice = "14B_image_720p"
     else:  # WAN 2.1 14B Image-to-Video 480P
         model_choice = "14B_image_480p"
-        
+    
+    if lora_model == "None" or not lora_model:
+        effective_lora_model = None
+    else:
+        effective_lora_model = os.path.join("LoRAs", lora_model)
+    
     current_config = {
         "model_choice": model_choice,
         "torch_dtype": torch_dtype,
         "num_persistent": vram_value,
+        "lora_model": effective_lora_model,
+        "lora_alpha": lora_alpha,
     }
     if loaded_pipeline is None or loaded_pipeline_config != current_config:
-        loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value)
+        if effective_lora_model is not None:
+            print(f"[CMD] Applying LoRA in batch: {effective_lora_model} with scale {lora_alpha}")
+        else:
+            print("[CMD] No LoRA selected for batch. Using base model.")
+        loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value, lora_path=effective_lora_model, lora_alpha=lora_alpha)
         loaded_pipeline_config = current_config
 
     common_args_base = {
@@ -617,17 +639,20 @@ def batch_process_videos(
         base, ext = os.path.splitext(image_file)
         prompt_path = os.path.join(folder_path, base + ".txt")
         if not os.path.exists(prompt_path):
-            log_text += f"[CMD] No corresponding prompt file for {image_file}, skipping.\n"
-            print(f"[CMD] No corresponding prompt file for {image_file}, skipping.")
-            continue
-        
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            prompt_content = f.read().strip()
-        if prompt_content == "":
-            log_text += f"[CMD] Prompt file {base + '.txt'} is empty, skipping {image_file}.\n"
-            print(f"[CMD] Prompt file {base + '.txt'} is empty, skipping {image_file}.")
-            continue
-        
+            log_text += f"[CMD] No prompt txt found for {image_file}, using user entered prompt: {default_prompt}\n"
+            print(f"[CMD] No prompt txt found for {image_file}, using user entered prompt: {default_prompt}")
+            prompt_content = default_prompt
+        else:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                prompt_content = f.read().strip()
+            if prompt_content == "":
+                log_text += f"[CMD] Prompt txt {base + '.txt'} is empty, using user entered prompt: {default_prompt}\n"
+                print(f"[CMD] Prompt txt {base + '.txt'} is empty, using user entered prompt: {default_prompt}")
+                prompt_content = default_prompt
+            else:
+                log_text += f"[CMD] Using user made prompt txt for {image_file}: {prompt_content}\n"
+                print(f"[CMD] Using user made prompt txt for {image_file}: {prompt_content}")
+
         output_filename = os.path.join(batch_output_folder, base + ".mp4")
         if skip_overwrite and os.path.exists(output_filename):
             log_text += f"[CMD] Output video {output_filename} already exists, skipping {image_file} due to skip overwrite.\n"
@@ -646,8 +671,8 @@ def batch_process_videos(
         common_args["prompt"] = prompt_content
         common_args["seed"] = current_seed
 
-        log_text += f"[CMD] Processing {image_file} with prompt from {base + '.txt'} and seed {current_seed}\n"
-        print(f"[CMD] Processing {image_file} with prompt from {base + '.txt'} and seed {current_seed}")
+        log_text += f"[CMD] Processing {image_file} with prompt from {base + '.txt'} (or user entered prompt) and seed {current_seed}\n"
+        print(f"[CMD] Processing {image_file} with prompt from {base + '.txt'} (or user entered prompt) and seed {current_seed}")
         
         try:
             image_path = os.path.join(folder_path, image_file)
@@ -689,6 +714,11 @@ def batch_process_videos(
             generation_details += f"Seed: {current_seed}\n"
             generation_details += f"Number of Frames: {num_frames}\n"
             generation_details += f"Denoising Strength: {denoising_strength}\n"
+            # Log LoRA usage in batch
+            if lora_model and lora_model != "None":
+                generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
+            else:
+                generation_details += "LoRA Model: None\n"
             generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
             generation_details += f"Generation Duration: {generation_duration:.2f} seconds / {(generation_duration/60):.2f} minutes\n"
             with open(text_filename, "w", encoding="utf-8") as f:
@@ -899,7 +929,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V16 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V17 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1014,7 +1044,7 @@ if __name__ == "__main__":
                 num_frames_slider,
                 aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, tiled_checkbox, inference_steps_slider,
                 pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
-                lora_dropdown, lora_alpha_slider  # New LoRA parameters
+                lora_dropdown, lora_alpha_slider
             ],
             outputs=[video_output, status_output, last_seed_output]
         )
@@ -1023,6 +1053,7 @@ if __name__ == "__main__":
         batch_process_button.click(
             fn=batch_process_videos,
             inputs=[
+                prompt_box,  # default prompt to use if txt file is missing
                 batch_folder_input, 
                 batch_output_folder_input, 
                 skip_overwrite_checkbox, 
@@ -1045,7 +1076,9 @@ if __name__ == "__main__":
                 auto_crop_checkbox,
                 save_prompt_batch_checkbox,
                 pr_rife_checkbox, 
-                pr_rife_radio
+                pr_rife_radio,
+                lora_dropdown,
+                lora_alpha_slider
             ],
             outputs=batch_status_output
         )
