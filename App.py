@@ -19,6 +19,7 @@ from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
+
 ASPECT_RATIOS_1_3b = {
     "1:1":  (640, 640),
     "4:3":  (736, 544),
@@ -48,6 +49,7 @@ ASPECT_RATIOS_14b = {
     "4:5":  (864, 1072),
     "5:4":  (1072, 864),
 }
+
 
 def update_vram_and_resolution(model_choice, preset):
     """
@@ -131,6 +133,7 @@ def update_vram_and_resolution(model_choice, preset):
         default_aspect = "16:9"
     return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
 
+
 def update_model_settings(model_choice, current_vram_preset):
     """
     When the model selection changes, update both the VRAM persistent value as well as 
@@ -148,6 +151,7 @@ def update_model_settings(model_choice, current_vram_preset):
         num_persistent_val
     )
 
+
 def update_width_height(aspect_ratio, model_choice):
     """
     When the aspect ratio is changed, update both the width and height sliders to the default values
@@ -159,6 +163,7 @@ def update_width_height(aspect_ratio, model_choice):
         default_width, default_height = ASPECT_RATIOS_14b.get(aspect_ratio, (1280, 720))
     return default_width, default_height
 
+
 def update_vram_on_change(preset, model_choice):
     """
     When the VRAM preset changes, update the num_persistent text field based on the current model.
@@ -166,13 +171,13 @@ def update_vram_on_change(preset, model_choice):
     num_persistent_val, _, _ = update_vram_and_resolution(model_choice, preset)
     return num_persistent_val
 
+
 #############################################
 # Auto Crop Helper Functions
 #############################################
 def auto_crop_image(image, target_width, target_height):
     """
     Crops and downscales the image to exactly the target resolution.
-    
     The function first crops the image centrally to match the target aspect ratio,
     then resizes it to the target dimensions.
     """
@@ -198,6 +203,7 @@ def auto_crop_image(image, target_width, target_height):
     image = image.resize((target_width, target_height), Image.LANCZOS)
     return image
 
+
 def auto_crop_video(video_path, target_width, target_height, desired_frame_count, desired_fps=16):
     """
     Reads a video from disk, and for each frame:
@@ -205,7 +211,6 @@ def auto_crop_video(video_path, target_width, target_height, desired_frame_count
       - Performs center crop to get exactly the target resolution.
       - Processes only a number of frames equal to desired_frame_count.
     Saves to a new file (with a _cropped suffix) and returns its path.
-    
     The output video FPS is set to desired_fps.
     The output video duration will be desired_frame_count / desired_fps seconds.
     """
@@ -257,6 +262,7 @@ def auto_crop_video(video_path, target_width, target_height, desired_frame_count
     print(f"[CMD] Output video saved to: {out_path}")
     return out_path
 
+
 def prompt_enc(prompt, tar_lang):
     """
     Enhances the prompt using the prompt expander model.
@@ -278,11 +284,13 @@ def prompt_enc(prompt, tar_lang):
     # Keep prompt_expander in memory for subsequent prompt enhancements.
     return result
 
+
 def generate_videos(
     prompt, tar_lang, negative_prompt, input_image, input_video, denoising_strength, num_generations,
     save_prompt, multi_line, use_random_seed, seed_input, quality, fps,
     model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
-    aspect_ratio, width, height, auto_crop, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift
+    aspect_ratio, width, height, auto_crop, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift,
+    lora_model, lora_alpha
 ):
     """
     Main generation function now using width and height sliders as final resolution values.
@@ -297,6 +305,11 @@ def generate_videos(
     IMPORTANT: For image-to-video models, if auto_crop is enabled, the image is auto processed and saved
     in the folder "auto_pre_processed_images" immediately (before starting video generation) with the same
     base name as the final video output.
+    
+    New LoRA support:
+      - If a LoRA model is selected (i.e. not "None") then the pipeline will be reloaded with that LoRA applied.
+      - The LoRA scale (lora_alpha) is also tracked.
+      - If LoRA is unselected (“None”), the pipeline is reloaded without a LoRA.
     """
     global loaded_pipeline, loaded_pipeline_config, cancel_flag
     cancel_flag = False  # reset cancellation flag at start
@@ -305,6 +318,7 @@ def generate_videos(
     last_video_path = ""
     overall_start_time = time.time()  # overall timer
 
+    # Determine which effective model is used.
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
         model_choice = "1.3B"
         d = ASPECT_RATIOS_1_3b
@@ -354,13 +368,29 @@ def generate_videos(
 
     vram_value = num_persistent_input
 
+    # Process LoRA input:
+    if lora_model == "None" or not lora_model:
+        effective_lora_model = None
+    else:
+        effective_lora_model = os.path.join("LoRAs", lora_model)
+
+    # Prepare the current configuration dictionary (including LoRA settings).
     current_config = {
         "model_choice": model_choice,
         "torch_dtype": torch_dtype,
         "num_persistent": vram_value,
+        "lora_model": effective_lora_model,
+        "lora_alpha": lora_alpha,
     }
+
+    # If the loaded pipeline config has changed (including changes in LoRA selection/scale), reload the pipeline.
     if loaded_pipeline is None or loaded_pipeline_config != current_config:
-        loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value)
+        if effective_lora_model is not None:
+            print(f"[CMD] Applying LoRA: {effective_lora_model} with scale {lora_alpha}")
+        else:
+            print("[CMD] No LoRA selected. Using base model.")
+        loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value,
+                                              lora_path=effective_lora_model, lora_alpha=lora_alpha)
         loaded_pipeline_config = current_config
 
     if multi_line:
@@ -506,6 +536,7 @@ def generate_videos(
 
     return last_video_path, log_text, str(last_used_seed or "")
 
+
 def cancel_generation():
     """
     Sets the global cancel flag so that generation loops can end early.
@@ -514,6 +545,7 @@ def cancel_generation():
     cancel_flag = True
     print("[CMD] Cancel button pressed.")
     return "Cancelling generation..."
+
 
 def batch_process_videos(
     folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
@@ -680,6 +712,7 @@ def batch_process_videos(
 
     return log_text
 
+
 def cancel_batch_process():
     """
     Sets the global cancel flag so that batch processing can end early.
@@ -688,6 +721,7 @@ def cancel_batch_process():
     cancel_batch_flag = True
     print("[CMD] Batch process cancel button pressed.")
     return "Cancelling batch process..."
+
 
 def get_next_filename(extension):
     """
@@ -708,6 +742,7 @@ def get_next_filename(extension):
     next_number = max(current_numbers, default=0) + 1
     return os.path.join(outputs_dir, f"{next_number:05d}{extension}")
 
+
 def open_outputs_folder():
     """
     Opens the outputs folder using the default file explorer on Windows or Linux.
@@ -721,12 +756,19 @@ def open_outputs_folder():
         print("[CMD] Opening folder not supported on this OS.")
     return f"Opened {outputs_dir}"
 
-def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
+
+def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=None, lora_alpha=None):
     """
     Loads the appropriate WAN pipeline based on:
       - model_choice: one of "1.3B", "14B_text", "14B_image_720p", or "14B_image_480p"
       - torch_dtype_str: either "torch.float8_e4m3fn" or "torch.bfloat16"
       - num_persistent: VRAM related parameter (can be an integer or None)
+      - lora_path: path to a LoRA .safetensors file if selected, else None.
+      - lora_alpha: scaling factor for the LoRA.
+    
+    When a LoRA is provided, the model_manager loads the LoRA weights _before_ instantiating the pipeline.
+    Then the pipeline is loaded only once with the LoRA included.
+    The pipeline is then enabled to manage VRAM with the provided persistent parameter.
     """
     print(f"[CMD] Loading model: {model_choice} with torch dtype: {torch_dtype_str} and num_persistent_param_in_dit: {num_persistent}")
     device = "cuda"
@@ -742,7 +784,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     elif model_choice == "14B_text":
         model_manager.load_models(
             [
@@ -759,7 +800,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     elif model_choice == "14B_image_720p":
         model_manager.load_models(
             [
@@ -778,7 +818,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     elif model_choice == "14B_image_480p":
         model_manager.load_models(
             [
@@ -797,10 +836,15 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
             ],
             torch_dtype=torch_dtype,
         )
-        pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     else:
         raise ValueError("Invalid model choice")
     
+    if lora_path is not None:
+        print(f"[CMD] Loading LoRA from {lora_path} with alpha {lora_alpha}")
+        model_manager.load_lora(lora_path, lora_alpha=lora_alpha)
+
+    pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+
     if str(num_persistent).strip().lower() == "none":
         num_persistent_val = None
     else:
@@ -813,6 +857,28 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent):
     pipe.enable_vram_management(num_persistent_param_in_dit=num_persistent_val)
     print("[CMD] Model loaded successfully.")
     return pipe
+
+
+def get_lora_choices():
+    """
+    Scans the 'LoRAs' folder for .safetensors files and returns a list of choices,
+    including a "None" option as the first entry.
+    """
+    lora_folder = "LoRAs"
+    if not os.path.exists(lora_folder):
+        os.makedirs(lora_folder)
+        print("[CMD] 'LoRAs' folder not found. Created 'LoRAs' folder. Please add your LoRA .safetensors files.")
+    files = [f for f in os.listdir(lora_folder) if f.endswith(".safetensors")]
+    choices = ["None"] + sorted(files)
+    return choices
+
+
+def refresh_lora_list():
+    """
+    Scans the 'LoRAs' folder for .safetensors files and returns an update with the list.
+    """
+    return gr.update(choices=get_lora_choices(), value="None")
+
 
 if __name__ == "__main__":
 
@@ -833,7 +899,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V15 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V16 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -884,6 +950,16 @@ if __name__ == "__main__":
                         label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage (Not working RTX 5000 Yet)",
                         value="torch.bfloat16"
                     )
+                # --- New LoRA support UI elements under the prompt box --- 
+                with gr.Row():
+                    lora_dropdown = gr.Dropdown(
+                        label="LoRA Model (Place .safetensors files in 'LoRAs' folder)",
+                        choices=get_lora_choices(),  # Now populated on load
+                        value="None"
+                    )
+                    lora_alpha_slider = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=1.0, label="LoRA Scale")
+                    refresh_lora_button = gr.Button("Refresh LoRAs")
+                # -----------------------------------------------------------
                 with gr.Row():
                     generate_button = gr.Button("Generate", variant="primary")
                     cancel_button = gr.Button("Cancel")
@@ -892,7 +968,7 @@ if __name__ == "__main__":
                 with gr.Row():
                     tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value="EN")
                     enhance_button = gr.Button("Prompt Enhance")
-                negative_prompt = gr.Textbox(label="Negative Prompt",value="still and motionless picture, static", placeholder="Enter negative prompt", lines=2)
+                negative_prompt = gr.Textbox(label="Negative Prompt", value="still and motionless picture, static", placeholder="Enter negative prompt", lines=2)
                 with gr.Row():
                     save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=True)
                     multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=False)
@@ -937,7 +1013,8 @@ if __name__ == "__main__":
                 model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
                 num_frames_slider,
                 aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, tiled_checkbox, inference_steps_slider,
-                pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider
+                pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                lora_dropdown, lora_alpha_slider  # New LoRA parameters
             ],
             outputs=[video_output, status_output, last_seed_output]
         )
@@ -988,5 +1065,6 @@ if __name__ == "__main__":
             inputs=[vram_preset_radio, model_choice_radio],
             outputs=num_persistent_text
         )
+        refresh_lora_button.click(fn=refresh_lora_list, inputs=[], outputs=lora_dropdown)
 
         demo.launch(share=args.share, inbrowser=True)
