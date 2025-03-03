@@ -873,7 +873,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
         print(f"[CMD] Loading LoRA from {lora_path} with alpha {lora_alpha}")
         model_manager.load_lora(lora_path, lora_alpha=lora_alpha)
 
-    pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch_dtype, device=device)
+    pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
 
     if str(num_persistent).strip().lower() == "none":
         num_persistent_val = None
@@ -929,7 +929,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V17 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V18 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
