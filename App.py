@@ -510,6 +510,8 @@ def generate_videos(
                     generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
                 else:
                     generation_details += "LoRA Model: None\n"
+                # Log the precision used based on torch_dtype.
+                generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
                 generation_details += f"Generation Duration: {time.time()-iter_start:.2f} seconds / {(time.time()-iter_start)/60:.2f} minutes\n"
                 with open(text_filename, "w", encoding="utf-8") as f:
@@ -719,6 +721,8 @@ def batch_process_videos(
                 generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
             else:
                 generation_details += "LoRA Model: None\n"
+            # Log the precision used based on torch_dtype.
+            generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
             generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
             generation_details += f"Generation Duration: {generation_duration:.2f} seconds / {(generation_duration/60):.2f} minutes\n"
             with open(text_filename, "w", encoding="utf-8") as f:
@@ -929,7 +933,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V18 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V19 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -977,7 +981,7 @@ if __name__ == "__main__":
                     num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value="12000000000")
                     torch_dtype_radio = gr.Radio(
                         choices=["torch.float8_e4m3fn", "torch.bfloat16"],
-                        label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage (Not working RTX 5000 Yet)",
+                        label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage",
                         value="torch.bfloat16"
                     )
                 # --- New LoRA support UI elements under the prompt box --- 
