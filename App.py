@@ -5,6 +5,7 @@ import random
 import argparse
 import time
 import tempfile
+import json
 
 import torch
 import gradio as gr
@@ -19,6 +20,223 @@ from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
+# ------------------------------
+# New: Config management functions
+# ------------------------------
+
+CONFIG_DIR = "configs"
+LAST_CONFIG_FILE = os.path.join(CONFIG_DIR, "last_used_config.txt")
+DEFAULT_CONFIG_NAME = "Default"
+
+def get_default_config():
+    return {
+        "model_choice": "WAN 2.1 1.3B (Text/Video-to-Video)",
+        "vram_preset": "24GB",
+        "aspect_ratio": "16:9",
+        "width": 832,
+        "height": 480,
+        "auto_crop": True,
+        "tiled": True,
+        "inference_steps": 50,
+        "pr_rife": True,
+        "pr_rife_multiplier": "2x FPS",
+        "cfg_scale": 6.0,
+        "sigma_shift": 6.0,
+        "num_persistent": "12000000000",
+        "torch_dtype": "torch.bfloat16",
+        "lora_model": "None",
+        "lora_alpha": 1.0,
+        "negative_prompt": "still and motionless picture, static",
+        "save_prompt": True,
+        "multiline": False,
+        "num_generations": 1,
+        "use_random_seed": True,
+        "seed": "",
+        "quality": 5,
+        "fps": 16,
+        "num_frames": 81,
+        "denoising_strength": 0.7,
+        "tar_lang": "EN",
+        "batch_folder": "batch_inputs",
+        "batch_output_folder": "batch_outputs",
+        "skip_overwrite": True,
+        "save_prompt_batch": True
+    }
+
+if not os.path.exists(CONFIG_DIR):
+    os.makedirs(CONFIG_DIR)
+
+default_config = get_default_config()
+
+# Load last used config or create default if missing.
+if os.path.exists(LAST_CONFIG_FILE):
+    with open(LAST_CONFIG_FILE, "r", encoding="utf-8") as f:
+        last_config_name = f.read().strip()
+    config_file_path = os.path.join(CONFIG_DIR, f"{last_config_name}.json")
+    if os.path.exists(config_file_path):
+        with open(config_file_path, "r", encoding="utf-8") as f:
+            config_loaded = json.load(f)
+        last_config = last_config_name
+    else:
+        default_config_path = os.path.join(CONFIG_DIR, f"{DEFAULT_CONFIG_NAME}.json")
+        if os.path.exists(default_config_path):
+            with open(default_config_path, "r", encoding="utf-8") as f:
+                config_loaded = json.load(f)
+            last_config = DEFAULT_CONFIG_NAME
+        else:
+            config_loaded = default_config
+            with open(default_config_path, "w", encoding="utf-8") as f:
+                json.dump(config_loaded, f, indent=4)
+            last_config = DEFAULT_CONFIG_NAME
+            with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+                f.write(last_config)
+else:
+    default_config_path = os.path.join(CONFIG_DIR, f"{DEFAULT_CONFIG_NAME}.json")
+    if os.path.exists(default_config_path):
+        with open(default_config_path, "r", encoding="utf-8") as f:
+            config_loaded = json.load(f)
+        last_config = DEFAULT_CONFIG_NAME
+        with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_CONFIG_NAME)
+    else:
+        config_loaded = default_config
+        with open(default_config_path, "w", encoding="utf-8") as f:
+            json.dump(config_loaded, f, indent=4)
+        last_config = DEFAULT_CONFIG_NAME
+        with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_CONFIG_NAME)
+
+def get_config_list():
+    if not os.path.exists(CONFIG_DIR):
+        os.makedirs(CONFIG_DIR)
+    files = os.listdir(CONFIG_DIR)
+    configs = [os.path.splitext(f)[0] for f in files if f.endswith(".json")]
+    return sorted(configs)
+
+def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, height, auto_crop, tiled, inference_steps,
+                pr_rife, pr_rife_multiplier, cfg_scale, sigma_shift, num_persistent, torch_dtype, lora_model, lora_alpha,
+                negative_prompt, save_prompt, multiline, num_generations, use_random_seed, seed, quality, fps, num_frames,
+                denoising_strength, tar_lang, batch_folder, batch_output_folder, skip_overwrite, save_prompt_batch):
+    if not config_name:
+        return "Config name cannot be empty", gr.update(choices=get_config_list())
+    config_data = {
+        "model_choice": model_choice,
+        "vram_preset": vram_preset,
+        "aspect_ratio": aspect_ratio,
+        "width": width,
+        "height": height,
+        "auto_crop": auto_crop,
+        "tiled": tiled,
+        "inference_steps": inference_steps,
+        "pr_rife": pr_rife,
+        "pr_rife_multiplier": pr_rife_multiplier,
+        "cfg_scale": cfg_scale,
+        "sigma_shift": sigma_shift,
+        "num_persistent": num_persistent,
+        "torch_dtype": torch_dtype,
+        "lora_model": lora_model,
+        "lora_alpha": lora_alpha,
+        "negative_prompt": negative_prompt,
+        "save_prompt": save_prompt,
+        "multiline": multiline,
+        "num_generations": num_generations,
+        "use_random_seed": use_random_seed,
+        "seed": seed,
+        "quality": quality,
+        "fps": fps,
+        "num_frames": num_frames,
+        "denoising_strength": denoising_strength,
+        "tar_lang": tar_lang,
+        "batch_folder": batch_folder,
+        "batch_output_folder": batch_output_folder,
+        "skip_overwrite": skip_overwrite,
+        "save_prompt_batch": save_prompt_batch
+    }
+    config_path = os.path.join(CONFIG_DIR, f"{config_name}.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=4)
+    with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+        f.write(config_name)
+    return f"Config '{config_name}' saved.", gr.update(choices=get_config_list(), value=config_name)
+
+def load_config(selected_config):
+    config_path = os.path.join(CONFIG_DIR, f"{selected_config}.json")
+    if not os.path.exists(config_path):
+        default_vals = get_default_config()
+        return (f"Config '{selected_config}' not found.",
+                default_vals["model_choice"],
+                default_vals["vram_preset"],
+                default_vals["aspect_ratio"],
+                default_vals["width"],
+                default_vals["height"],
+                default_vals["auto_crop"],
+                default_vals["tiled"],
+                default_vals["inference_steps"],
+                default_vals["pr_rife"],
+                default_vals["pr_rife_multiplier"],
+                default_vals["cfg_scale"],
+                default_vals["sigma_shift"],
+                default_vals["num_persistent"],
+                default_vals["torch_dtype"],
+                default_vals["lora_model"],
+                default_vals["lora_alpha"],
+                default_vals["negative_prompt"],
+                default_vals["save_prompt"],
+                default_vals["multiline"],
+                default_vals["num_generations"],
+                default_vals["use_random_seed"],
+                default_vals["seed"],
+                default_vals["quality"],
+                default_vals["fps"],
+                default_vals["num_frames"],
+                default_vals["denoising_strength"],
+                default_vals["tar_lang"],
+                default_vals["batch_folder"],
+                default_vals["batch_output_folder"],
+                default_vals["skip_overwrite"],
+                default_vals["save_prompt_batch"],
+                "" )
+    with open(config_path, "r", encoding="utf-8") as f:
+        config_data = json.load(f)
+    with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+        f.write(selected_config)
+    return (f"Config '{selected_config}' loaded.",
+            config_data.get("model_choice", "WAN 2.1 1.3B (Text/Video-to-Video)"),
+            config_data.get("vram_preset", "24GB"),
+            config_data.get("aspect_ratio", "16:9"),
+            config_data.get("width", 832),
+            config_data.get("height", 480),
+            config_data.get("auto_crop", True),
+            config_data.get("tiled", True),
+            config_data.get("inference_steps", 50),
+            config_data.get("pr_rife", True),
+            config_data.get("pr_rife_multiplier", "2x FPS"),
+            config_data.get("cfg_scale", 6.0),
+            config_data.get("sigma_shift", 6.0),
+            config_data.get("num_persistent", "12000000000"),
+            config_data.get("torch_dtype", "torch.bfloat16"),
+            config_data.get("lora_model", "None"),
+            config_data.get("lora_alpha", 1.0),
+            config_data.get("negative_prompt", "still and motionless picture, static"),
+            config_data.get("save_prompt", True),
+            config_data.get("multiline", False),
+            config_data.get("num_generations", 1),
+            config_data.get("use_random_seed", True),
+            config_data.get("seed", ""),
+            config_data.get("quality", 5),
+            config_data.get("fps", 16),
+            config_data.get("num_frames", 81),
+            config_data.get("denoising_strength", 0.7),
+            config_data.get("tar_lang", "EN"),
+            config_data.get("batch_folder", "batch_inputs"),
+            config_data.get("batch_output_folder", "batch_outputs"),
+            config_data.get("skip_overwrite", True),
+            config_data.get("save_prompt_batch", True),
+            "" )
+
+# ------------------------------
+# The rest of the app remains largely the same.
+# ------------------------------
 
 ASPECT_RATIOS_1_3b = {
     "1:1":  (640, 640),
@@ -685,7 +903,6 @@ def batch_process_videos(
                 generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
             else:
                 generation_details += "LoRA Model: None\n"
-            # Log the precision used based on torch_dtype.
             generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
             generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
             generation_details += f"Generation Duration: {generation_duration:.2f} seconds / {(generation_duration/60):.2f} minutes\n"
@@ -705,7 +922,6 @@ def batch_process_videos(
                 f'--video="{output_filename}" --output="{improved_video}"'
             )
             print(f"[CMD] Running command: {cmd}")
-            # Pass the current environment to ensure that the subprocess uses the activated virtual environment
             subprocess.run(cmd, shell=True, check=True, env=os.environ)
             print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
             log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
@@ -881,7 +1097,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V25 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V26 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -896,50 +1112,49 @@ if __name__ == "__main__":
                             "WAN 2.1 14B Image-to-Video 480P"
                         ],
                         label="Model Choice",
-                        value="WAN 2.1 1.3B (Text/Video-to-Video)"
+                        value=config_loaded.get("model_choice", "WAN 2.1 1.3B (Text/Video-to-Video)")
                     )
                     vram_preset_radio = gr.Radio(
                         choices=["4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB", "32GB", "48GB", "80GB"],
                         label="GPU VRAM Preset",
-                        value="24GB"
+                        value=config_loaded.get("vram_preset", "24GB")
                     )
                 with gr.Row():
                     # Fix: set default aspect ratios so that they are visible immediately.
                     aspect_ratio_radio = gr.Radio(
                         choices=list(ASPECT_RATIOS_1_3b.keys()),
                         label="Aspect Ratio",
-                        value="16:9"
+                        value=config_loaded.get("aspect_ratio", "16:9")
                     )
                 # Combined row: width, height, auto crop, tiled and inference steps.
                 with gr.Row():
-                    width_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=832, label="Width")
-                    height_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=480, label="Height")
-                    auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=True)
-                    tiled_checkbox = gr.Checkbox(label="Tiled VAE Decode (Disable for 1.3B model for 12GB or more GPUs)", value=True)
-                    inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=50, label="Inference Steps")
-                # New Practical-RIFE options and new CFG Scale & Sigma Shift sliders.
+                    width_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("width", 832), label="Width")
+                    height_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("height", 480), label="Height")
+                    auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=config_loaded.get("auto_crop", True))
+                    tiled_checkbox = gr.Checkbox(label="Tiled VAE Decode (Disable for 1.3B model for 12GB or more GPUs)", value=config_loaded.get("tiled", True))
+                    inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=config_loaded.get("inference_steps", 50), label="Inference Steps")
                 gr.Markdown("### Increase Video FPS with Practical-RIFE")
                 with gr.Row():
-                    pr_rife_checkbox = gr.Checkbox(label="Apply Practical-RIFE", value=True)
-                    pr_rife_radio = gr.Radio(choices=["2x FPS", "4x FPS"], label="FPS Multiplier", value="2x FPS")
-                    cfg_scale_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=6.0, label="CFG Scale")
-                    sigma_shift_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=6.0, label="Sigma Shift")
+                    pr_rife_checkbox = gr.Checkbox(label="Apply Practical-RIFE", value=config_loaded.get("pr_rife", True))
+                    pr_rife_radio = gr.Radio(choices=["2x FPS", "4x FPS"], label="FPS Multiplier", value=config_loaded.get("pr_rife_multiplier", "2x FPS"))
+                    cfg_scale_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("cfg_scale", 6.0), label="CFG Scale")
+                    sigma_shift_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("sigma_shift", 6.0), label="Sigma Shift")
                 gr.Markdown("### GPU Settings")
                 with gr.Row():
-                    num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value="12000000000")
+                    num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value=config_loaded.get("num_persistent", "12000000000"))
                     torch_dtype_radio = gr.Radio(
                         choices=["torch.float8_e4m3fn", "torch.bfloat16"],
                         label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage",
-                        value="torch.bfloat16"
+                        value=config_loaded.get("torch_dtype", "torch.bfloat16")
                     )
                 # --- New LoRA support UI elements under the prompt box --- 
                 with gr.Row():
                     lora_dropdown = gr.Dropdown(
                         label="LoRA Model (Place .safetensors files in 'LoRAs' folder)",
-                        choices=get_lora_choices(),  # Now populated on load
-                        value="None"
+                        choices=get_lora_choices(),
+                        value=config_loaded.get("lora_model", "None")
                     )
-                    lora_alpha_slider = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=1.0, label="LoRA Scale")
+                    lora_alpha_slider = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=config_loaded.get("lora_alpha", 1.0), label="LoRA Scale")
                     refresh_lora_button = gr.Button("Refresh LoRAs")
                 # -----------------------------------------------------------
                 with gr.Row():
@@ -948,34 +1163,47 @@ if __name__ == "__main__":
                 # Prompt input and enhancement.
                 prompt_box = gr.Textbox(label="Prompt", placeholder="Describe the video you want to generate", lines=5)
                 with gr.Row():
-                    tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value="EN")
+                    tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value=config_loaded.get("tar_lang", "EN"))
                     enhance_button = gr.Button("Prompt Enhance")
-                negative_prompt = gr.Textbox(label="Negative Prompt", value="still and motionless picture, static", placeholder="Enter negative prompt", lines=2)
+                negative_prompt = gr.Textbox(label="Negative Prompt", value=config_loaded.get("negative_prompt", "still and motionless picture, static"), placeholder="Enter negative prompt", lines=2)
                 with gr.Row():
-                    save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=True)
-                    multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=False)
-                num_generations = gr.Number(label="Number of Generations", value=1, precision=0)
+                    save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=config_loaded.get("save_prompt", True))
+                    multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=config_loaded.get("multiline", False))
+                num_generations = gr.Number(label="Number of Generations", value=config_loaded.get("num_generations", 1), precision=0)
                 with gr.Row():
-                    use_random_seed_checkbox = gr.Checkbox(label="Use Random Seed", value=True)
-                    seed_input = gr.Textbox(label="Seed (if not using random)", placeholder="Enter seed", value="")
+                    use_random_seed_checkbox = gr.Checkbox(label="Use Random Seed", value=config_loaded.get("use_random_seed", True))
+                    seed_input = gr.Textbox(label="Seed (if not using random)", placeholder="Enter seed", value=config_loaded.get("seed", ""))
                 with gr.Row():
-                    quality_slider = gr.Slider(minimum=1, maximum=10, step=1, value=5, label="Quality")
-                    fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=16, label="FPS (for saving video)")
-                    num_frames_slider = gr.Slider(minimum=1, maximum=300, step=1, value=81, label="Number of Frames")
+                    quality_slider = gr.Slider(minimum=1, maximum=10, step=1, value=config_loaded.get("quality", 5), label="Quality")
+                    fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=config_loaded.get("fps", 16), label="FPS (for saving video)")
+                    num_frames_slider = gr.Slider(minimum=1, maximum=300, step=1, value=config_loaded.get("num_frames", 81), label="Number of Frames")
                 # Image and Video inputs.
                 with gr.Row():
                     image_input = gr.Image(type="pil", label="Input Image (for image-to-video)", height=512)
                     video_input = gr.Video(label="Input Video (for video-to-video, only for 1.3B)", format="mp4", height=512)
-                denoising_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, value=0.7,
+                denoising_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, value=config_loaded.get("denoising_strength", 0.7),
                                              label="Denoising Strength (only for video-to-video)")
             with gr.Column(scale=3):
                 video_output = gr.Video(label="Generated Video", height=720)
-                gr.Markdown("### Batch Image-to-Video Processing")
-                batch_folder_input = gr.Textbox(label="Input Folder for Batch Processing", placeholder="Enter input folder path", value="batch_inputs")
-                batch_output_folder_input = gr.Textbox(label="Batch Processing Outputs Folder", placeholder="Enter batch outputs folder path", value="batch_outputs")
+                # ------------------------------
+                # New Config Panel
+                # ------------------------------
+                gr.Markdown("### Configuration Management")
                 with gr.Row():
-                    skip_overwrite_checkbox = gr.Checkbox(label="Skip Overwrite if Output Exists", value=True)
-                    save_prompt_batch_checkbox = gr.Checkbox(label="Save prompt to file (Batch)", value=True)
+                    config_name_textbox = gr.Textbox(label="Config Name (for saving)", placeholder="Enter config name", value="")
+                    save_config_button = gr.Button("Save Config")
+                with gr.Row():
+                    config_dropdown = gr.Dropdown(label="Load Config", choices=get_config_list(), value=last_config)
+                    load_config_button = gr.Button("Load Config")
+                with gr.Row():
+                    config_status = gr.Textbox(label="Config Status", value="", interactive=False, lines=1)
+                # ------------------------------
+                gr.Markdown("### Batch Image-to-Video Processing")
+                batch_folder_input = gr.Textbox(label="Input Folder for Batch Processing", placeholder="Enter input folder path", value=config_loaded.get("batch_folder", "batch_inputs"))
+                batch_output_folder_input = gr.Textbox(label="Batch Processing Outputs Folder", placeholder="Enter batch outputs folder path", value=config_loaded.get("batch_output_folder", "batch_outputs"))
+                with gr.Row():
+                    skip_overwrite_checkbox = gr.Checkbox(label="Skip Overwrite if Output Exists", value=config_loaded.get("skip_overwrite", True))
+                    save_prompt_batch_checkbox = gr.Checkbox(label="Save prompt to file (Batch)", value=config_loaded.get("save_prompt_batch", True))
                 with gr.Row():
                     batch_process_button = gr.Button("Batch Process")
                     cancel_batch_process_button = gr.Button("Cancel Batch Process")
@@ -1051,5 +1279,28 @@ if __name__ == "__main__":
             outputs=num_persistent_text
         )
         refresh_lora_button.click(fn=refresh_lora_list, inputs=[], outputs=lora_dropdown)
+        # Config Panel events
+        save_config_button.click(
+            fn=save_config,
+            inputs=[config_name_textbox, model_choice_radio, vram_preset_radio, aspect_ratio_radio, width_slider, height_slider,
+                    auto_crop_checkbox, tiled_checkbox, inference_steps_slider, pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                    num_persistent_text, torch_dtype_radio, lora_dropdown, lora_alpha_slider, negative_prompt, save_prompt_checkbox, multiline_checkbox,
+                    num_generations, use_random_seed_checkbox, seed_input, quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
+                    batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox],
+            outputs=[config_status, config_dropdown]
+        )
+        load_config_button.click(
+            fn=load_config,
+            inputs=[config_dropdown],
+            outputs=[
+                config_status, 
+                model_choice_radio, vram_preset_radio, aspect_ratio_radio, width_slider, height_slider,
+                auto_crop_checkbox, tiled_checkbox, inference_steps_slider, pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                num_persistent_text, torch_dtype_radio, lora_dropdown, lora_alpha_slider, negative_prompt, save_prompt_checkbox, multiline_checkbox,
+                num_generations, use_random_seed_checkbox, seed_input, quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
+                batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
+                config_name_textbox
+            ]
+        )
 
         demo.launch(share=args.share, inbrowser=True)

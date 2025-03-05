@@ -25,6 +25,7 @@ auto_pre_processed_images
 cache
 DiffSynth-Studio
 outputs
+configs
 venv
 __pycache__/
 storage/
