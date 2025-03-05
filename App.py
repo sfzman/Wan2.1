@@ -526,9 +526,14 @@ def generate_videos(
         multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
         improved_video = os.path.join("outputs", "improved_" + os.path.basename(last_video_path))
         model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-        cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{last_video_path}" --output="{improved_video}"'
+        cmd = (
+            f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
+            f'--model="{model_dir}" --multi={multiplier_val} '
+            f'--video="{last_video_path}" --output="{improved_video}"'
+        )
         print(f"[CMD] Running command: {cmd}")
-        subprocess.run(cmd, shell=True, check=True)
+        # Pass os.environ to ensure the subprocess inherits the activated venv's environment
+        subprocess.run(cmd, shell=True, check=True, env=os.environ)
         print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
         last_video_path = improved_video
         log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
@@ -735,9 +740,14 @@ def batch_process_videos(
             multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
             improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
             model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-            cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{output_filename}" --output="{improved_video}"'
+            cmd = (
+                f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
+                f'--model="{model_dir}" --multi={multiplier_val} '
+                f'--video="{output_filename}" --output="{improved_video}"'
+            )
             print(f"[CMD] Running command: {cmd}")
-            subprocess.run(cmd, shell=True, check=True)
+            # Pass the current environment to ensure that the subprocess uses the activated virtual environment
+            subprocess.run(cmd, shell=True, check=True, env=os.environ)
             print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
             log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
@@ -933,7 +943,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V24 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V25 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
