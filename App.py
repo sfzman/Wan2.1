@@ -21,9 +21,25 @@ from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
 # ------------------------------
-# New: Config management functions
+# Helper function for common model files
 # ------------------------------
+def get_common_file(new_path, old_path):
+    """
+    Returns the common model file path.
+    If the file exists in new_path, then return that,
+    else if it exists in old_path, return that (for legacy support).
+    """
+    if os.path.exists(new_path):
+        return new_path
+    elif os.path.exists(old_path):
+        return old_path
+    else:
+        print(f"[WARNING] Neither {new_path} nor {old_path} found. Using {old_path} as fallback.")
+        return old_path
 
+# ------------------------------
+# Config management functions
+# ------------------------------
 CONFIG_DIR = "configs"
 LAST_CONFIG_FILE = os.path.join(CONFIG_DIR, "last_used_config.txt")
 DEFAULT_CONFIG_NAME = "Default"
@@ -697,7 +713,6 @@ def generate_videos(
                     generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
                 else:
                     generation_details += "LoRA Model: None\n"
-                # Log the precision used based on torch_dtype.
                 generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
                 generation_details += f"Generation Duration: {time.time()-iter_start:.2f} seconds / {(time.time()-iter_start)/60:.2f} minutes\n"
@@ -898,7 +913,6 @@ def batch_process_videos(
             generation_details += f"Seed: {current_seed}\n"
             generation_details += f"Number of Frames: {num_frames}\n"
             generation_details += f"Denoising Strength: {denoising_strength}\n"
-            # Log LoRA usage in batch
             if lora_model and lora_model != "None":
                 generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
             else:
@@ -979,63 +993,83 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
 
     model_manager = ModelManager(device="cpu")
     if model_choice == "1.3B":
+        t5_path = get_common_file(os.path.join("models", "models_t5_umt5-xxl-enc-bf16.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-T2V-1.3B", "models_t5_umt5-xxl-enc-bf16.pth"))
+        vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-T2V-1.3B", "Wan2.1_VAE.pth"))
         model_manager.load_models(
             [
-                "models/Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors",
-                "models/Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth",
-                "models/Wan-AI/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth",
+                os.path.join("models", "Wan-AI", "Wan2.1-T2V-1.3B", "diffusion_pytorch_model.safetensors"),
+                t5_path,
+                vae_path,
             ],
             torch_dtype=torch_dtype,
         )
     elif model_choice == "14B_text":
+        t5_path = get_common_file(os.path.join("models", "models_t5_umt5-xxl-enc-bf16.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "models_t5_umt5-xxl-enc-bf16.pth"))
+        vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "Wan2.1_VAE.pth"))
         model_manager.load_models(
             [
                 [
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors",
-                    "models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors"
+                    os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "diffusion_pytorch_model-00001-of-00006.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "diffusion_pytorch_model-00002-of-00006.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "diffusion_pytorch_model-00003-of-00006.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "diffusion_pytorch_model-00004-of-00006.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "diffusion_pytorch_model-00005-of-00006.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-T2V-14B", "diffusion_pytorch_model-00006-of-00006.safetensors")
                 ],
-                "models/Wan-AI/Wan2.1-T2V-14B/models_t5_umt5-xxl-enc-bf16.pth",
-                "models/Wan-AI/Wan2.1-T2V-14B/Wan2.1_VAE.pth",
+                t5_path,
+                vae_path,
             ],
             torch_dtype=torch_dtype,
         )
     elif model_choice == "14B_image_720p":
+        clip_path = get_common_file(os.path.join("models", "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"),
+                                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"))
+        t5_path = get_common_file(os.path.join("models", "models_t5_umt5-xxl-enc-bf16.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "models_t5_umt5-xxl-enc-bf16.pth"))
+        vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "Wan2.1_VAE.pth"))
         model_manager.load_models(
             [
                 [
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00001-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00002-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00003-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00004-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00005-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00006-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-720P/diffusion_pytorch_model-00007-of-00007.safetensors",
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00001-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00002-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00003-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00004-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00005-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00006-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00007-of-00007.safetensors"),
                 ],
-                "models/Wan-AI/Wan2.1-I2V-14B-720P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
-                "models/Wan-AI/Wan2.1-I2V-14B-720P/models_t5_umt5-xxl-enc-bf16.pth",
-                "models/Wan-AI/Wan2.1-I2V-14B-720P/Wan2.1_VAE.pth",
+                clip_path,
+                t5_path,
+                vae_path,
             ],
             torch_dtype=torch_dtype,
         )
     elif model_choice == "14B_image_480p":
+        clip_path = get_common_file(os.path.join("models", "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"),
+                                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"))
+        t5_path = get_common_file(os.path.join("models", "models_t5_umt5-xxl-enc-bf16.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "models_t5_umt5-xxl-enc-bf16.pth"))
+        vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
+                                  os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "Wan2.1_VAE.pth"))
         model_manager.load_models(
             [
                 [
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00001-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00002-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00003-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00004-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00005-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00006-of-00007.safetensors",
-                    "models/Wan-AI/Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00007-of-00007.safetensors",
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00001-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00002-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00003-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00004-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00005-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00006-of-00007.safetensors"),
+                    os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00007-of-00007.safetensors"),
                 ],
-                "models/Wan-AI/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
-                "models/Wan-AI/Wan2.1-I2V-14B-480P/models_t5_umt5-xxl-enc-bf16.pth",
-                "models/Wan-AI/Wan2.1-I2V-14B-480P/Wan2.1_VAE.pth",
+                clip_path,
+                t5_path,
+                vae_path,
             ],
             torch_dtype=torch_dtype,
         )
@@ -1097,7 +1131,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V27 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V28 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1120,13 +1154,11 @@ if __name__ == "__main__":
                         value=config_loaded.get("vram_preset", "24GB")
                     )
                 with gr.Row():
-                    # Fix: set default aspect ratios so that they are visible immediately.
                     aspect_ratio_radio = gr.Radio(
                         choices=list(ASPECT_RATIOS_1_3b.keys()),
                         label="Aspect Ratio",
                         value=config_loaded.get("aspect_ratio", "16:9")
                     )
-                # Combined row: width, height, auto crop, tiled and inference steps.
                 with gr.Row():
                     width_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("width", 832), label="Width")
                     height_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("height", 480), label="Height")
@@ -1147,7 +1179,6 @@ if __name__ == "__main__":
                         label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage",
                         value=config_loaded.get("torch_dtype", "torch.bfloat16")
                     )
-                # --- New LoRA support UI elements under the prompt box --- 
                 with gr.Row():
                     lora_dropdown = gr.Dropdown(
                         label="LoRA Model (Place .safetensors files in 'LoRAs' folder)",
@@ -1156,11 +1187,9 @@ if __name__ == "__main__":
                     )
                     lora_alpha_slider = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=config_loaded.get("lora_alpha", 1.0), label="LoRA Scale")
                     refresh_lora_button = gr.Button("Refresh LoRAs")
-                # -----------------------------------------------------------
                 with gr.Row():
                     generate_button = gr.Button("Generate", variant="primary")
                     cancel_button = gr.Button("Cancel")
-                # Prompt input and enhancement.
                 prompt_box = gr.Textbox(label="Prompt", placeholder="Describe the video you want to generate", lines=5)
                 with gr.Row():
                     tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value=config_loaded.get("tar_lang", "EN"))
@@ -1177,7 +1206,6 @@ if __name__ == "__main__":
                     quality_slider = gr.Slider(minimum=1, maximum=10, step=1, value=config_loaded.get("quality", 5), label="Quality")
                     fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=config_loaded.get("fps", 16), label="FPS (for saving video)")
                     num_frames_slider = gr.Slider(minimum=1, maximum=300, step=1, value=config_loaded.get("num_frames", 81), label="Number of Frames")
-                # Image and Video inputs.
                 with gr.Row():
                     image_input = gr.Image(type="pil", label="Input Image (for image-to-video)", height=512)
                     video_input = gr.Video(label="Input Video (for video-to-video, only for 1.3B)", format="mp4", height=512)
@@ -1185,9 +1213,6 @@ if __name__ == "__main__":
                                              label="Denoising Strength (only for video-to-video)")
             with gr.Column(scale=3):
                 video_output = gr.Video(label="Generated Video", height=720)
-                # ------------------------------
-                # New Config Panel
-                # ------------------------------
                 gr.Markdown("### Configuration Management")
                 with gr.Row():
                     config_name_textbox = gr.Textbox(label="Config Name (for saving)", placeholder="Enter config name", value="")
@@ -1197,7 +1222,6 @@ if __name__ == "__main__":
                     load_config_button = gr.Button("Load Config")
                 with gr.Row():
                     config_status = gr.Textbox(label="Config Status", value="", interactive=False, lines=1)
-                # ------------------------------
                 gr.Markdown("### Batch Image-to-Video Processing")
                 batch_folder_input = gr.Textbox(label="Input Folder for Batch Processing", placeholder="Enter input folder path", value=config_loaded.get("batch_folder", "batch_inputs"))
                 batch_output_folder_input = gr.Textbox(label="Batch Processing Outputs Folder", placeholder="Enter batch outputs folder path", value=config_loaded.get("batch_output_folder", "batch_outputs"))
@@ -1212,7 +1236,6 @@ if __name__ == "__main__":
                 last_seed_output = gr.Textbox(label="Last Used Seed", interactive=False)
                 open_outputs_button = gr.Button("Open Outputs Folder")
 
-        # Button events and interactions.
         enhance_button.click(fn=prompt_enc, inputs=[prompt_box, tar_lang], outputs=prompt_box)
         generate_button.click(
             fn=generate_videos,
@@ -1233,7 +1256,7 @@ if __name__ == "__main__":
         batch_process_button.click(
             fn=batch_process_videos,
             inputs=[
-                prompt_box,  # default prompt to use if txt file is missing
+                prompt_box,
                 batch_folder_input, 
                 batch_output_folder_input, 
                 skip_overwrite_checkbox, 
@@ -1279,7 +1302,6 @@ if __name__ == "__main__":
             outputs=num_persistent_text
         )
         refresh_lora_button.click(fn=refresh_lora_list, inputs=[], outputs=lora_dropdown)
-        # Config Panel events
         save_config_button.click(
             fn=save_config,
             inputs=[config_name_textbox, model_choice_radio, vram_preset_radio, aspect_ratio_radio, width_slider, height_slider,

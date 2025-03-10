@@ -18,6 +18,7 @@ auto_pre_processed_images
 *.json
 # *.txt
 *.backup
+models
 *.pkl
 *.html
 *.pdf
