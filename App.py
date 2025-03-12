@@ -518,8 +518,9 @@ def generate_videos(
     cancel_flag = False  # reset cancellation flag at start
     log_text = ""
     last_used_seed = None
-    last_video_path = ""
     overall_start_time = time.time()  # overall timer
+
+    improved_videos = []  # List to keep track of each processed video
 
     # Determine which effective model is used.
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
@@ -617,8 +618,6 @@ def generate_videos(
                 return "", log_text, str(last_used_seed or "")
             iteration += 1
 
-            iter_start = time.time()
-
             log_text += f"[CMD] Generating video {iteration} of {total_iterations} with prompt: {p}\n"
             print(f"[CMD] Generating video {iteration}/{total_iterations} with prompt: {p}")
 
@@ -715,30 +714,31 @@ def generate_videos(
                     generation_details += "LoRA Model: None\n"
                 generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
-                generation_details += f"Generation Duration: {time.time()-iter_start:.2f} seconds / {(time.time()-iter_start)/60:.2f} minutes\n"
+                generation_details += f"Generation Duration: {time.time()-iteration:.2f} seconds\n"
                 with open(text_filename, "w", encoding="utf-8") as f:
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
                 print(f"[CMD] Saved prompt and parameters: {text_filename}")
 
-            last_video_path = video_filename
+            # Apply Practical-RIFE for the current generated video if enabled.
+            if pr_rife_enabled and video_filename:
+                print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {video_filename}")
+                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                improved_video = os.path.join("outputs", "improved_" + os.path.basename(video_filename))
+                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                cmd = (
+                    f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
+                    f'--model="{model_dir}" --multi={multiplier_val} '
+                    f'--video="{video_filename}" --output="{improved_video}"'
+                )
+                print(f"[CMD] Running command: {cmd}")
+                subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
+                log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                video_filename = improved_video
 
-    if pr_rife_enabled and last_video_path:
-        print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {last_video_path}")
-        multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-        improved_video = os.path.join("outputs", "improved_" + os.path.basename(last_video_path))
-        model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-        cmd = (
-            f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
-            f'--model="{model_dir}" --multi={multiplier_val} '
-            f'--video="{last_video_path}" --output="{improved_video}"'
-        )
-        print(f"[CMD] Running command: {cmd}")
-        # Pass os.environ to ensure the subprocess inherits the activated venv's environment
-        subprocess.run(cmd, shell=True, check=True, env=os.environ)
-        print(f"[CMD] Practical-RIFE finished. Improved video saved to: {improved_video}")
-        last_video_path = improved_video
-        log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+            improved_videos.append(video_filename)
+            last_video_path = video_filename
 
     overall_duration = time.time() - overall_start_time
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
@@ -748,6 +748,7 @@ def generate_videos(
     loaded_pipeline = None
     loaded_pipeline_config = {}
 
+    # Return the last improved video for display along with the log and seed.
     return last_video_path, log_text, str(last_used_seed or "")
 
 
@@ -1131,7 +1132,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V28 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V29 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
