@@ -6,6 +6,7 @@ import argparse
 import time
 import tempfile
 import json
+import gc  # Added for garbage collection
 
 import torch
 import gradio as gr
@@ -76,7 +77,10 @@ def get_default_config():
         "batch_folder": "batch_inputs",
         "batch_output_folder": "batch_outputs",
         "skip_overwrite": True,
-        "save_prompt_batch": True
+        "save_prompt_batch": True,
+        # New TeaCache defaults:
+        "enable_teacache": False,
+        "teacache_thresh": 0.15
     }
 
 if not os.path.exists(CONFIG_DIR):
@@ -132,7 +136,8 @@ def get_config_list():
 def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, height, auto_crop, tiled, inference_steps,
                 pr_rife, pr_rife_multiplier, cfg_scale, sigma_shift, num_persistent, torch_dtype, lora_model, lora_alpha,
                 negative_prompt, save_prompt, multiline, num_generations, use_random_seed, seed, quality, fps, num_frames,
-                denoising_strength, tar_lang, batch_folder, batch_output_folder, skip_overwrite, save_prompt_batch):
+                denoising_strength, tar_lang, batch_folder, batch_output_folder, skip_overwrite, save_prompt_batch,
+                enable_teacache, teacache_thresh):
     if not config_name:
         return "Config name cannot be empty", gr.update(choices=get_config_list())
     config_data = {
@@ -166,7 +171,9 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
         "batch_folder": batch_folder,
         "batch_output_folder": batch_output_folder,
         "skip_overwrite": skip_overwrite,
-        "save_prompt_batch": save_prompt_batch
+        "save_prompt_batch": save_prompt_batch,
+        "enable_teacache": enable_teacache,
+        "teacache_thresh": teacache_thresh
     }
     config_path = os.path.join(CONFIG_DIR, f"{config_name}.json")
     with open(config_path, "w", encoding="utf-8") as f:
@@ -211,7 +218,9 @@ def load_config(selected_config):
                 default_vals["batch_output_folder"],
                 default_vals["skip_overwrite"],
                 default_vals["save_prompt_batch"],
-                "" )
+                "",           # config_name textbox value (reset to empty)
+                False,        # enable_teacache (default disabled)
+                0.15 )       # teacache_thresh (default)
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = json.load(f)
     with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -248,7 +257,9 @@ def load_config(selected_config):
             config_data.get("batch_output_folder", "batch_outputs"),
             config_data.get("skip_overwrite", True),
             config_data.get("save_prompt_batch", True),
-            "" )
+            "",   # config_name textbox (set to empty so user can type a new one)
+            config_data.get("enable_teacache", False),
+            config_data.get("teacache_thresh", 0.15))
 
 # ------------------------------
 # The rest of the app remains largely the same.
@@ -511,6 +522,7 @@ def generate_videos(
     save_prompt, multi_line, use_random_seed, seed_input, quality, fps,
     model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
     aspect_ratio, width, height, auto_crop, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift,
+    enable_teacache, teacache_thresh,
     lora_model, lora_alpha
 ):
 
@@ -522,19 +534,23 @@ def generate_videos(
 
     improved_videos = []  # List to keep track of each processed video
 
-    # Determine which effective model is used.
+    # Determine which effective model is used and assign TeaCache model size accordingly.
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
         model_choice = "1.3B"
         d = ASPECT_RATIOS_1_3b
+        teacache_model_size = "1.3B"
     elif model_choice_radio == "WAN 2.1 14B Text-to-Video":
         model_choice = "14B_text"
         d = ASPECT_RATIOS_14b
+        teacache_model_size = "14B"
     elif model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
         model_choice = "14B_image_720p"
         d = ASPECT_RATIOS_14b
+        teacache_model_size = "720P"
     elif model_choice_radio == "WAN 2.1 14B Image-to-Video 480P":
         model_choice = "14B_image_480p"
         d = ASPECT_RATIOS_1_3b
+        teacache_model_size = "480P"
     else:
         return "", "Invalid model choice.", ""
     
@@ -615,8 +631,14 @@ def generate_videos(
                 log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
                 loaded_pipeline = None
                 loaded_pipeline_config = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 return "", log_text, str(last_used_seed or "")
             iteration += 1
+
+            # Start timer for this iteration.
+            gen_start = time.time()
 
             log_text += f"[CMD] Generating video {iteration} of {total_iterations} with prompt: {p}\n"
             print(f"[CMD] Generating video {iteration}/{total_iterations} with prompt: {p}")
@@ -653,12 +675,22 @@ def generate_videos(
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
                     print(f"[CMD] Processing video-to-video with input video: {input_video_path}")
                     video_obj = VideoData(input_video_path, height=target_height, width=target_width)
-                    video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength, **common_args)
+                    video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength,
+                                                 enable_teacache=enable_teacache,
+                                                 teacache_thresh=teacache_thresh,
+                                                 teacache_model_size=teacache_model_size,
+                                                 **common_args)
                 else:
-                    video_data = loaded_pipeline(**common_args)
+                    video_data = loaded_pipeline(**common_args,
+                                                 enable_teacache=enable_teacache,
+                                                 teacache_thresh=teacache_thresh,
+                                                 teacache_model_size=teacache_model_size)
                 video_filename = get_next_filename(".mp4")
             elif model_choice == "14B_text":
-                video_data = loaded_pipeline(**common_args)
+                video_data = loaded_pipeline(**common_args,
+                                             enable_teacache=enable_teacache,
+                                             teacache_thresh=teacache_thresh,
+                                             teacache_model_size=teacache_model_size)
                 video_filename = get_next_filename(".mp4")
             elif model_choice in ["14B_image_720p", "14B_image_480p"]:
                 if input_image is None:
@@ -666,6 +698,9 @@ def generate_videos(
                     print(err_msg)
                     loaded_pipeline = None
                     loaded_pipeline_config = {}
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                     return "", err_msg, str(last_used_seed or "")
                 # For image-to-video, process the image *per iteration* so that we can save the preprocessed image
                 if auto_crop:
@@ -682,12 +717,19 @@ def generate_videos(
                 processed_image.save(preprocessed_image_filename)
                 log_text += f"[CMD] Saved auto processed image: {preprocessed_image_filename}\n"
                 print(f"[CMD] Saved auto processed image: {preprocessed_image_filename}")
-                video_data = loaded_pipeline(input_image=processed_image, **common_args)
+                video_data = loaded_pipeline(input_image=processed_image,
+                                             enable_teacache=enable_teacache,
+                                             teacache_thresh=teacache_thresh,
+                                             teacache_model_size=teacache_model_size,
+                                             **common_args)
             else:
                 err_msg = "[CMD] Invalid combination of inputs."
                 print(err_msg)
                 loaded_pipeline = None
                 loaded_pipeline_config = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 return "", err_msg, str(last_used_seed or "")
 
             save_video(video_data, video_filename, fps=fps, quality=quality)
@@ -703,18 +745,21 @@ def generate_videos(
                 generation_details += f"Number of Inference Steps: {inference_steps}\n"
                 generation_details += f"Seed: {current_seed}\n"
                 generation_details += f"Number of Frames: {effective_num_frames}\n"
-                if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)" and input_video is not None:
+                if model_choice == "1.3B" and input_video is not None:
                     generation_details += f"Denoising Strength: {denoising_strength}\n"
                 else:
                     generation_details += "Denoising Strength: N/A\n"
-                # Log LoRA usage
+                # Log LoRA and TeaCache usage
                 if lora_model and lora_model != "None":
                     generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
                 else:
                     generation_details += "LoRA Model: None\n"
+                generation_details += f"TeaCache Enabled: {enable_teacache}\n"
+                generation_details += f"TeaCache Threshold: {teacache_thresh}\n"
                 generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
-                generation_details += f"Generation Duration: {time.time()-iteration:.2f} seconds\n"
+                generation_duration = time.time() - gen_start
+                generation_details += f"Generation Duration: {generation_duration:.2f} seconds\n"
                 with open(text_filename, "w", encoding="utf-8") as f:
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
@@ -747,6 +792,9 @@ def generate_videos(
 
     loaded_pipeline = None
     loaded_pipeline_config = {}
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Return the last improved video for display along with the log and seed.
     return last_video_path, log_text, str(last_used_seed or "")
@@ -766,7 +814,8 @@ def batch_process_videos(
     default_prompt, folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
     torch_dtype, num_frames, inference_steps, aspect_ratio, width, height, auto_crop,
-    save_prompt, pr_rife_enabled, pr_rife_radio, lora_model, lora_alpha
+    save_prompt, pr_rife_enabled, pr_rife_radio, lora_model, lora_alpha,
+    enable_teacache, teacache_thresh
 ):
 
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
@@ -784,8 +833,10 @@ def batch_process_videos(
     vram_value = num_persistent_input
     if model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
         model_choice = "14B_image_720p"
+        teacache_model_size = "720P"
     else:  # WAN 2.1 14B Image-to-Video 480P
         model_choice = "14B_image_480p"
+        teacache_model_size = "480P"
     
     if lora_model == "None" or not lora_model:
         effective_lora_model = None
@@ -887,7 +938,10 @@ def batch_process_videos(
         else:
             processed_image = image_obj
             
-        video_data = loaded_pipeline(input_image=processed_image, **common_args)
+        video_data = loaded_pipeline(input_image=processed_image, **common_args,
+                                     enable_teacache=enable_teacache,
+                                     teacache_thresh=teacache_thresh,
+                                     teacache_model_size=teacache_model_size)
         save_video(video_data, output_filename, fps=fps, quality=quality)
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
         print(f"[CMD] Saved batch generated video: {output_filename}")
@@ -918,6 +972,8 @@ def batch_process_videos(
                 generation_details += f"LoRA Model: {lora_model} with scale {lora_alpha}\n"
             else:
                 generation_details += "LoRA Model: None\n"
+            generation_details += f"TeaCache Enabled: {enable_teacache}\n"
+            generation_details += f"TeaCache Threshold: {teacache_thresh}\n"
             generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
             generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
             generation_details += f"Generation Duration: {generation_duration:.2f} seconds / {(generation_duration/60):.2f} minutes\n"
@@ -943,6 +999,9 @@ def batch_process_videos(
 
     loaded_pipeline = None
     loaded_pipeline_config = {}
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return log_text
 
@@ -1132,7 +1191,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V29 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V30 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1180,6 +1239,12 @@ if __name__ == "__main__":
                         label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage",
                         value=config_loaded.get("torch_dtype", "torch.bfloat16")
                     )
+                # TeaCache Settings
+                with gr.Row():
+                    gr.Markdown("### TeaCache Settings")
+                with gr.Row():
+                    enable_teacache_checkbox = gr.Checkbox(label="Enable TeaCache (0.1 Threshold for 1.3b model and 0.15 for 14b models recommened - the more faster but lower quality)", value=config_loaded.get("enable_teacache", False))
+                    teacache_thresh_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=config_loaded.get("teacache_thresh", 0.15), label="Teacache Threshold")
                 with gr.Row():
                     lora_dropdown = gr.Dropdown(
                         label="LoRA Model (Place .safetensors files in 'LoRAs' folder)",
@@ -1240,53 +1305,51 @@ if __name__ == "__main__":
         enhance_button.click(fn=prompt_enc, inputs=[prompt_box, tar_lang], outputs=prompt_box)
         generate_button.click(
             fn=generate_videos,
-            inputs=[
-                prompt_box, tar_lang, negative_prompt, image_input, video_input, denoising_slider,
-                num_generations, save_prompt_checkbox, multiline_checkbox, use_random_seed_checkbox, seed_input,
-                quality_slider, fps_slider,
-                model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
-                num_frames_slider,
-                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, tiled_checkbox, inference_steps_slider,
-                pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
-                lora_dropdown, lora_alpha_slider
-            ],
+            inputs=[prompt_box, tar_lang, negative_prompt, image_input, video_input, denoising_slider,
+                    num_generations, save_prompt_checkbox, multiline_checkbox, use_random_seed_checkbox, seed_input,
+                    quality_slider, fps_slider,
+                    model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
+                    num_frames_slider,
+                    aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, tiled_checkbox, inference_steps_slider,
+                    pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                    enable_teacache_checkbox, teacache_thresh_slider,
+                    lora_dropdown, lora_alpha_slider],
             outputs=[video_output, status_output, last_seed_output]
         )
         cancel_button.click(fn=cancel_generation, outputs=status_output)
         open_outputs_button.click(fn=open_outputs_folder, outputs=status_output)
         batch_process_button.click(
             fn=batch_process_videos,
-            inputs=[
-                prompt_box,
-                batch_folder_input, 
-                batch_output_folder_input, 
-                skip_overwrite_checkbox, 
-                tar_lang, 
-                negative_prompt, 
-                denoising_slider,
-                use_random_seed_checkbox, 
-                seed_input, 
-                quality_slider, 
-                fps_slider, 
-                model_choice_radio, 
-                vram_preset_radio, 
-                num_persistent_text,
-                torch_dtype_radio, 
-                num_frames_slider, 
-                inference_steps_slider,
-                aspect_ratio_radio, 
-                width_slider, 
-                height_slider, 
-                auto_crop_checkbox,
-                save_prompt_batch_checkbox,
-                pr_rife_checkbox, 
-                pr_rife_radio,
-                lora_dropdown,
-                lora_alpha_slider
-            ],
+            inputs=[prompt_box,
+                    batch_folder_input, 
+                    batch_output_folder_input, 
+                    skip_overwrite_checkbox, 
+                    tar_lang, 
+                    negative_prompt, 
+                    denoising_slider,
+                    use_random_seed_checkbox, 
+                    seed_input, 
+                    quality_slider, 
+                    fps_slider, 
+                    model_choice_radio, 
+                    vram_preset_radio, 
+                    num_persistent_text,
+                    torch_dtype_radio, 
+                    num_frames_slider, 
+                    inference_steps_slider,
+                    aspect_ratio_radio, 
+                    width_slider, 
+                    height_slider, 
+                    auto_crop_checkbox,
+                    save_prompt_batch_checkbox,
+                    pr_rife_checkbox, 
+                    pr_rife_radio,
+                    lora_dropdown,
+                    lora_alpha_slider,
+                    enable_teacache_checkbox, teacache_thresh_slider],
             outputs=batch_status_output
         )
-        cancel_batch_process_button.click(fn=cancel_batch_process, outputs=batch_status_output)
+        cancel_batch_process_button.click(fn=batch_process_videos, outputs=batch_status_output)
         model_choice_radio.change(
             fn=update_model_settings,
             inputs=[model_choice_radio, vram_preset_radio],
@@ -1309,7 +1372,8 @@ if __name__ == "__main__":
                     auto_crop_checkbox, tiled_checkbox, inference_steps_slider, pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
                     num_persistent_text, torch_dtype_radio, lora_dropdown, lora_alpha_slider, negative_prompt, save_prompt_checkbox, multiline_checkbox,
                     num_generations, use_random_seed_checkbox, seed_input, quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
-                    batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox],
+                    batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
+                    enable_teacache_checkbox, teacache_thresh_slider],
             outputs=[config_status, config_dropdown]
         )
         load_config_button.click(
@@ -1322,7 +1386,8 @@ if __name__ == "__main__":
                 num_persistent_text, torch_dtype_radio, lora_dropdown, lora_alpha_slider, negative_prompt, save_prompt_checkbox, multiline_checkbox,
                 num_generations, use_random_seed_checkbox, seed_input, quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
                 batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
-                config_name_textbox
+                config_name_textbox,
+                enable_teacache_checkbox, teacache_thresh_slider
             ]
         )
 
