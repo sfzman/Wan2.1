@@ -85,9 +85,10 @@ def get_default_config():
         "batch_output_folder": "batch_outputs",
         "skip_overwrite": True,
         "save_prompt_batch": True,
-        # New TeaCache defaults:
+        # TeaCache defaults & new parameters:
         "enable_teacache": False,
-        "teacache_thresh": 0.15
+        "tea_cache_l1_thresh": 0.15,
+        "tea_cache_model_id": "Wan2.1-T2V-1.3B"
     }
 
 if not os.path.exists(CONFIG_DIR):
@@ -145,7 +146,7 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
                 lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4,
                 negative_prompt, save_prompt, multiline, num_generations, use_random_seed, seed, quality, fps, num_frames,
                 denoising_strength, tar_lang, batch_folder, batch_output_folder, skip_overwrite, save_prompt_batch,
-                enable_teacache, teacache_thresh):
+                enable_teacache, tea_cache_l1_thresh, tea_cache_model_id):
     if not config_name:
         return "Config name cannot be empty", gr.update(choices=get_config_list())
     config_data = {
@@ -188,7 +189,8 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
         "skip_overwrite": skip_overwrite,
         "save_prompt_batch": save_prompt_batch,
         "enable_teacache": enable_teacache,
-        "teacache_thresh": teacache_thresh
+        "tea_cache_l1_thresh": tea_cache_l1_thresh,
+        "tea_cache_model_id": tea_cache_model_id
     }
     config_path = os.path.join(CONFIG_DIR, f"{config_name}.json")
     with open(config_path, "w", encoding="utf-8") as f:
@@ -243,7 +245,8 @@ def load_config(selected_config):
             default_vals["save_prompt_batch"],
             "",           # config_name textbox value (reset to empty)
             default_vals["enable_teacache"],
-            default_vals["teacache_thresh"]
+            default_vals["tea_cache_l1_thresh"],
+            default_vals["tea_cache_model_id"]
         )
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = json.load(f)
@@ -289,15 +292,15 @@ def load_config(selected_config):
         config_data.get("batch_output_folder", "batch_outputs"),
         config_data.get("skip_overwrite", True),
         config_data.get("save_prompt_batch", True),
-        "",   # config_name textbox (set to empty so user can type a new one)
+        "",   # config_name textbox (reset to empty so user can type a new one)
         config_data.get("enable_teacache", False),
-        config_data.get("teacache_thresh", 0.15)
+        config_data.get("tea_cache_l1_thresh", 0.05),
+        config_data.get("tea_cache_model_id", "Wan2.1-T2V-1.3B")
     )
 
 # ------------------------------
 # New helper functions
 # ------------------------------
-
 def auto_crop_image(image, target_width, target_height):
     """
     Crops and downscales the image to exactly the target resolution.
@@ -350,9 +353,19 @@ def toggle_lora_visibility(current_visibility):
     new_label = "Hide More LoRAs" if new_visibility else "Show More LoRAs"
     return gr.update(visible=new_visibility), new_visibility, new_label
 
-# ------------------------------
-# The rest of the app remains largely the same.
-# ------------------------------
+def update_tea_cache_model_id(model_choice):
+    """
+    Returns the TeaCache Model ID based on the selected model.
+    """
+    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
+        return "Wan2.1-T2V-1.3B"
+    elif model_choice == "WAN 2.1 14B Text-to-Video":
+        return "Wan2.1-T2V-14B"
+    elif model_choice == "WAN 2.1 14B Image-to-Video 720P":
+        return "Wan2.1-I2V-14B-720P"
+    elif model_choice == "WAN 2.1 14B Image-to-Video 480P":
+        return "Wan2.1-I2V-14B-480P"
+    return "Wan2.1-T2V-1.3B"
 
 ASPECT_RATIOS_1_3b = {
     "1:1":  (640, 640),
@@ -509,7 +522,7 @@ def generate_videos(
     save_prompt, multi_line, use_random_seed, seed_input, quality, fps,
     model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
     aspect_ratio, width, height, auto_crop, auto_scale, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift,
-    enable_teacache, teacache_thresh,
+    enable_teacache, tea_cache_l1_thresh, tea_cache_model_id,
     lora_model, lora_alpha,
     lora_model_2, lora_alpha_2,
     lora_model_3, lora_alpha_3,
@@ -522,24 +535,19 @@ def generate_videos(
     last_used_seed = None
     overall_start_time = time.time()
 
-    improved_videos = []
-
+    # Set model choice and resolution mapping based on the selected model.
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
         model_choice = "1.3B"
         d = ASPECT_RATIOS_1_3b
-        teacache_model_size = "1.3B"
     elif model_choice_radio == "WAN 2.1 14B Text-to-Video":
         model_choice = "14B_text"
         d = ASPECT_RATIOS_14b
-        teacache_model_size = "14B"
     elif model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
         model_choice = "14B_image_720p"
         d = ASPECT_RATIOS_14b
-        teacache_model_size = "720P"
     elif model_choice_radio == "WAN 2.1 14B Image-to-Video 480P":
         model_choice = "14B_image_480p"
         d = ASPECT_RATIOS_1_3b
-        teacache_model_size = "480P"
     else:
         return "", "Invalid model choice.", ""
     
@@ -564,6 +572,7 @@ def generate_videos(
         if model_choice == "1.3B" and input_video is not None:
             input_video_path = input_video if isinstance(input_video, str) else input_video.name
             print(f"[CMD] Auto cropping input video: {input_video_path}")
+            # The auto_crop_video function should be defined or imported accordingly.
             input_video_path = auto_crop_video(input_video_path, target_width, target_height, effective_num_frames, desired_fps=16)
             input_video = input_video_path
         elif input_image is not None:
@@ -598,13 +607,8 @@ def generate_videos(
         "lora_model_3": lora_model_3,
         "lora_alpha_3": lora_alpha_3,
         "lora_model_4": lora_model_4,
-        "lora_alpha_4": lora_alpha_4,
+        "lora_alpha_4": lora_alpha_4
     }:
-        if effective_loras:
-            for path, alpha in effective_loras:
-                print(f"[CMD] Applying LoRA: {path} with scale {alpha}")
-        else:
-            print("[CMD] No LoRA selected. Using base model.")
         loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
         loaded_pipeline_config = {
             "model_choice": model_choice,
@@ -617,7 +621,7 @@ def generate_videos(
             "lora_model_3": lora_model_3,
             "lora_alpha_3": lora_alpha_3,
             "lora_model_4": lora_model_4,
-            "lora_alpha_4": lora_alpha_4,
+            "lora_alpha_4": lora_alpha_4
         }
 
     if multi_line:
@@ -665,27 +669,26 @@ def generate_videos(
                 "cfg_scale": cfg_scale,
                 "sigma_shift": sigma_shift,
             }
+            # Add TeaCache parameters to common_args.
+            if enable_teacache:
+                common_args["tea_cache_l1_thresh"] = tea_cache_l1_thresh
+                common_args["tea_cache_model_id"] = tea_cache_model_id
+            else:
+                common_args["tea_cache_l1_thresh"] = None
+                common_args["tea_cache_model_id"] = ""
+
+            # Process based on model type.
             if model_choice == "1.3B":
                 if input_video is not None:
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
                     print(f"[CMD] Processing video-to-video with input video: {input_video_path}")
                     video_obj = VideoData(input_video_path, height=target_height, width=target_width)
-                    video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength,
-                                                 enable_teacache=enable_teacache,
-                                                 teacache_thresh=teacache_thresh,
-                                                 teacache_model_size=teacache_model_size,
-                                                 **common_args)
+                    video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength, **common_args)
                 else:
-                    video_data = loaded_pipeline(**common_args,
-                                                 enable_teacache=enable_teacache,
-                                                 teacache_thresh=teacache_thresh,
-                                                 teacache_model_size=teacache_model_size)
+                    video_data = loaded_pipeline(**common_args)
                 video_filename = get_next_filename(".mp4")
             elif model_choice == "14B_text":
-                video_data = loaded_pipeline(**common_args,
-                                             enable_teacache=enable_teacache,
-                                             teacache_thresh=teacache_thresh,
-                                             teacache_model_size=teacache_model_size)
+                video_data = loaded_pipeline(**common_args)
                 video_filename = get_next_filename(".mp4")
             elif model_choice in ["14B_image_720p", "14B_image_480p"]:
                 if input_image is None:
@@ -710,11 +713,7 @@ def generate_videos(
                 preprocessed_image_filename = os.path.join(preprocessed_folder, f"{base_name}.png")
                 processed_image.save(preprocessed_image_filename)
                 log_text += f"[CMD] Saved auto processed image: {preprocessed_image_filename}\n"
-                video_data = loaded_pipeline(input_image=processed_image,
-                                             enable_teacache=enable_teacache,
-                                             teacache_thresh=teacache_thresh,
-                                             teacache_model_size=teacache_model_size,
-                                             **common_args)
+                video_data = loaded_pipeline(input_image=processed_image, **common_args)
             else:
                 err_msg = "[CMD] Invalid combination of inputs."
                 loaded_pipeline = None
@@ -744,7 +743,9 @@ def generate_videos(
                 else:
                     generation_details += "LoRA Model: None\n"
                 generation_details += f"TeaCache Enabled: {enable_teacache}\n"
-                generation_details += f"TeaCache Threshold: {teacache_thresh}\n"
+                if enable_teacache:
+                    generation_details += f"TeaCache L1 Threshold: {tea_cache_l1_thresh}\n"
+                    generation_details += f"TeaCache Model ID: {tea_cache_model_id}\n"
                 generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
                 generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
                 generation_details += f"Final Resolution: {target_width}x{target_height}\n"
@@ -766,7 +767,6 @@ def generate_videos(
                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
                 log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
                 video_filename = improved_video
-            improved_videos.append(video_filename)
             last_video_path = video_filename
     overall_duration = time.time() - overall_start_time
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
@@ -793,7 +793,7 @@ def batch_process_videos(
     lora_model_2, lora_alpha_2,
     lora_model_3, lora_alpha_3,
     lora_model_4, lora_alpha_4,
-    enable_teacache, teacache_thresh
+    enable_teacache, tea_cache_l1_thresh, tea_cache_model_id
 ):
 
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
@@ -810,10 +810,8 @@ def batch_process_videos(
     vram_value = num_persistent_input
     if model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
         model_choice = "14B_image_720p"
-        teacache_model_size = "720P"
     else:
         model_choice = "14B_image_480p"
-        teacache_model_size = "480P"
     
     effective_loras = []
     if lora_model and lora_model != "None":
@@ -836,7 +834,7 @@ def batch_process_videos(
         "lora_model_3": lora_model_3,
         "lora_alpha_3": lora_alpha_3,
         "lora_model_4": lora_model_4,
-        "lora_alpha_4": lora_alpha_4,
+        "lora_alpha_4": lora_alpha_4
     }
     if loaded_pipeline is None or loaded_pipeline_config != current_config:
         if effective_loras:
@@ -906,6 +904,14 @@ def batch_process_videos(
         common_args["prompt"] = prompt_content
         common_args["seed"] = current_seed
 
+        # Add TeaCache parameters to common_args.
+        if enable_teacache:
+            common_args["tea_cache_l1_thresh"] = tea_cache_l1_thresh
+            common_args["tea_cache_model_id"] = tea_cache_model_id
+        else:
+            common_args["tea_cache_l1_thresh"] = None
+            common_args["tea_cache_model_id"] = ""
+
         log_text += f"[CMD] Processing {image_file} with prompt and seed {current_seed}\n"
         
         try:
@@ -922,10 +928,7 @@ def batch_process_videos(
         else:
             processed_image = image_obj
             
-        video_data = loaded_pipeline(input_image=processed_image, **common_args,
-                                     enable_teacache=enable_teacache,
-                                     teacache_thresh=teacache_thresh,
-                                     teacache_model_size=teacache_model_size)
+        video_data = loaded_pipeline(input_image=processed_image, **common_args)
         save_video(video_data, output_filename, fps=fps, quality=quality)
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
 
@@ -955,7 +958,9 @@ def batch_process_videos(
             else:
                 generation_details += "LoRA Model: None\n"
             generation_details += f"TeaCache Enabled: {enable_teacache}\n"
-            generation_details += f"TeaCache Threshold: {teacache_thresh}\n"
+            if enable_teacache:
+                generation_details += f"TeaCache L1 Threshold: {tea_cache_l1_thresh}\n"
+                generation_details += f"TeaCache Model ID: {tea_cache_model_id}\n"
             generation_details += f"Precision: {'FP8' if torch_dtype == 'torch.float8_e4m3fn' else 'BF16'}\n"
             generation_details += f"Auto Crop: {'Enabled' if auto_crop else 'Disabled'}\n"
             generation_details += f"Final Resolution: {target_width}x{target_height}\n"
@@ -964,17 +969,17 @@ def batch_process_videos(
                 f.write(generation_details)
             log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
 
-        if pr_rife_enabled:
-            multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-            improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
-            model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-            cmd = (
-                f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
-                f'--model="{model_dir}" --multi={multiplier_val} '
-                f'--video="{output_filename}" --output="{improved_video}"'
-            )
-            subprocess.run(cmd, shell=True, check=True, env=os.environ)
-            log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+            if pr_rife_enabled:
+                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
+                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                cmd = (
+                    f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
+                    f'--model="{model_dir}" --multi={multiplier_val} '
+                    f'--video="{output_filename}" --output="{improved_video}"'
+                )
+                subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
     loaded_pipeline = None
     loaded_pipeline_config = {}
@@ -1153,10 +1158,14 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V31 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V32 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
+                with gr.Row():
+                    generate_button = gr.Button("Generate", variant="primary")
+                    cancel_button = gr.Button("Cancel")
+                prompt_box = gr.Textbox(label="Prompt", placeholder="Describe the video you want to generate", lines=5)                
                 with gr.Row():
                     gr.Markdown("### Model & Resolution")
                 with gr.Row():
@@ -1203,11 +1212,12 @@ if __name__ == "__main__":
                         label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage",
                         value=config_loaded.get("torch_dtype", "torch.bfloat16")
                     )
+                gr.Markdown("### TeaCache Settings")
                 with gr.Row():
-                    gr.Markdown("### TeaCache Settings")
+                    enable_teacache_checkbox = gr.Checkbox(label="Enable TeaCache (0.05 Threshold for 1.3b model and 0.15 for 14b models recommended)", value=config_loaded.get("enable_teacache", False))
                 with gr.Row():
-                    enable_teacache_checkbox = gr.Checkbox(label="Enable TeaCache (0.1 Threshold for 1.3b model and 0.15 for 14b models recommended)", value=config_loaded.get("enable_teacache", False))
-                    teacache_thresh_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=config_loaded.get("teacache_thresh", 0.15), label="Teacache Threshold")
+                    tea_cache_l1_thresh_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=config_loaded.get("tea_cache_l1_thresh", 0.15), label="Tea Cache L1 Threshold")
+                    tea_cache_model_id_textbox = gr.Textbox(label="Tea Cache Model ID", value=config_loaded.get("tea_cache_model_id", "Wan2.1-T2V-1.3B"), placeholder="Enter Tea Cache Model ID")
                 with gr.Row():
                     lora_dropdown = gr.Dropdown(
                         label="LoRA Model (Place .safetensors files in 'LoRAs' folder)",
@@ -1220,7 +1230,7 @@ if __name__ == "__main__":
                     show_more_lora_button = gr.Button("Show More LoRAs")
                     more_lora_state = gr.State(False)
                 more_lora_container = gr.Column(visible=False)
-                with more_lora_container:
+                with gr.Column(visible=False):
                     lora_dropdown_2 = gr.Dropdown(label="LoRA Model 2", choices=get_lora_choices(), value=config_loaded.get("lora_model_2", "None"))
                     lora_alpha_slider_2 = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=config_loaded.get("lora_alpha_2", 1.0), label="LoRA Scale 2")
                     lora_dropdown_3 = gr.Dropdown(label="LoRA Model 3", choices=get_lora_choices(), value=config_loaded.get("lora_model_3", "None"))
@@ -1228,14 +1238,11 @@ if __name__ == "__main__":
                     lora_dropdown_4 = gr.Dropdown(label="LoRA Model 4", choices=get_lora_choices(), value=config_loaded.get("lora_model_4", "None"))
                     lora_alpha_slider_4 = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=config_loaded.get("lora_alpha_4", 1.0), label="LoRA Scale 4")
                 show_more_lora_button.click(fn=toggle_lora_visibility, inputs=[more_lora_state], outputs=[more_lora_container, more_lora_state, show_more_lora_button])
-                with gr.Row():
-                    generate_button = gr.Button("Generate", variant="primary")
-                    cancel_button = gr.Button("Cancel")
-                prompt_box = gr.Textbox(label="Prompt", placeholder="Describe the video you want to generate", lines=5)
+
                 with gr.Row():
                     tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value=config_loaded.get("tar_lang", "EN"))
                     enhance_button = gr.Button("Prompt Enhance")
-                negative_prompt = gr.Textbox(label="Negative Prompt", value=config_loaded.get("Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down"), placeholder="Enter negative prompt", lines=2)
+                negative_prompt = gr.Textbox(label="Negative Prompt", value=config_loaded.get("negative_prompt", "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down"), placeholder="Enter negative prompt", lines=2)
                 with gr.Row():
                     save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=config_loaded.get("save_prompt", True))
                     multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=config_loaded.get("multiline", False))
@@ -1277,91 +1284,76 @@ if __name__ == "__main__":
                 last_seed_output = gr.Textbox(label="Last Used Seed", interactive=False)
                 open_outputs_button = gr.Button("Open Outputs Folder")
 
+        # Register change callbacks
+        model_choice_radio.change(
+            fn=update_model_settings,
+            inputs=[model_choice_radio, vram_preset_radio],
+            outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
+        )
+        # New: Update TeaCache Model ID based on model choice.
+        model_choice_radio.change(
+            fn=update_tea_cache_model_id,
+            inputs=[model_choice_radio],
+            outputs=[tea_cache_model_id_textbox]
+        )
+
         enhance_button.click(fn=prompt_enc, inputs=[prompt_box, tar_lang], outputs=prompt_box)
         generate_button.click(
             fn=generate_videos,
-            inputs=[prompt_box, tar_lang, negative_prompt, image_input, video_input, denoising_slider,
-                    num_generations, save_prompt_checkbox, multiline_checkbox, use_random_seed_checkbox, seed_input,
-                    quality_slider, fps_slider,
-                    model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
-                    num_frames_slider,
-                    aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, auto_scale_checkbox, tiled_checkbox, inference_steps_slider,
-                    pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
-                    enable_teacache_checkbox, teacache_thresh_slider,
-                    lora_dropdown, lora_alpha_slider,
-                    lora_dropdown_2, lora_alpha_slider_2,
-                    lora_dropdown_3, lora_alpha_slider_3,
-                    lora_dropdown_4, lora_alpha_slider_4],
+            inputs=[
+                prompt_box, tar_lang, negative_prompt, image_input, video_input, denoising_slider,
+                num_generations, save_prompt_checkbox, multiline_checkbox, use_random_seed_checkbox, seed_input,
+                quality_slider, fps_slider,
+                model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
+                num_frames_slider,
+                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, auto_scale_checkbox, tiled_checkbox, inference_steps_slider,
+                pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox,
+                lora_dropdown, lora_alpha_slider,
+                lora_dropdown_2, lora_alpha_slider_2,
+                lora_dropdown_3, lora_alpha_slider_3,
+                lora_dropdown_4, lora_alpha_slider_4
+            ],
             outputs=[video_output, status_output, last_seed_output]
         )
         cancel_button.click(fn=cancel_generation, outputs=status_output)
         open_outputs_button.click(fn=open_outputs_folder, outputs=status_output)
         batch_process_button.click(
             fn=batch_process_videos,
-            inputs=[prompt_box,
-                    batch_folder_input, 
-                    batch_output_folder_input, 
-                    skip_overwrite_checkbox, 
-                    tar_lang, 
-                    negative_prompt, 
-                    denoising_slider,
-                    use_random_seed_checkbox, 
-                    seed_input, 
-                    quality_slider, 
-                    fps_slider, 
-                    model_choice_radio, 
-                    vram_preset_radio, 
-                    num_persistent_text,
-                    torch_dtype_radio, 
-                    num_frames_slider, 
-                    inference_steps_slider,
-                    aspect_ratio_radio, 
-                    width_slider, 
-                    height_slider, 
-                    auto_crop_checkbox, auto_scale_checkbox,
-                    save_prompt_batch_checkbox,
-                    pr_rife_checkbox, 
-                    pr_rife_radio,
-                    lora_dropdown, lora_alpha_slider,
-                    lora_dropdown_2, lora_alpha_slider_2,
-                    lora_dropdown_3, lora_alpha_slider_3,
-                    lora_dropdown_4, lora_alpha_slider_4,
-                    enable_teacache_checkbox, teacache_thresh_slider],
+            inputs=[
+                prompt_box,
+                batch_folder_input, 
+                batch_output_folder_input, 
+                skip_overwrite_checkbox, 
+                tar_lang, 
+                negative_prompt, 
+                denoising_slider,
+                use_random_seed_checkbox, 
+                seed_input, 
+                quality_slider, 
+                fps_slider, 
+                model_choice_radio, 
+                vram_preset_radio, 
+                num_persistent_text,
+                torch_dtype_radio, 
+                num_frames_slider, 
+                inference_steps_slider,
+                aspect_ratio_radio, 
+                width_slider, 
+                height_slider, 
+                auto_crop_checkbox, auto_scale_checkbox,
+                save_prompt_batch_checkbox,
+                pr_rife_checkbox, 
+                pr_rife_radio,
+                lora_dropdown, lora_alpha_slider,
+                lora_dropdown_2, lora_alpha_slider_2,
+                lora_dropdown_3, lora_alpha_slider_3,
+                lora_dropdown_4, lora_alpha_slider_4,
+                enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox
+            ],
             outputs=batch_status_output
         )
         cancel_batch_process_button.click(fn=batch_process_videos, outputs=batch_status_output)
-        model_choice_radio.change(
-            fn=update_model_settings,
-            inputs=[model_choice_radio, vram_preset_radio],
-            outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
-        )
-        aspect_ratio_radio.change(
-            fn=update_width_height,
-            inputs=[aspect_ratio_radio, model_choice_radio],
-            outputs=[width_slider, height_slider]
-        )
-        vram_preset_radio.change(
-            fn=update_vram_on_change,
-            inputs=[vram_preset_radio, model_choice_radio],
-            outputs=num_persistent_text
-        )
-        refresh_lora_button.click(fn=refresh_lora_list, inputs=[], outputs=lora_dropdown)
-        save_config_button.click(
-            fn=save_config,
-            inputs=[config_name_textbox, model_choice_radio, vram_preset_radio, aspect_ratio_radio, width_slider, height_slider,
-                    auto_crop_checkbox, auto_scale_checkbox, tiled_checkbox, inference_steps_slider, pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
-                    num_persistent_text, torch_dtype_radio,
-                    lora_dropdown, lora_alpha_slider,
-                    lora_dropdown_2, lora_alpha_slider_2,
-                    lora_dropdown_3, lora_alpha_slider_3,
-                    lora_dropdown_4, lora_alpha_slider_4,
-                    negative_prompt, save_prompt_checkbox, multiline_checkbox,
-                    num_generations, use_random_seed_checkbox, seed_input,
-                    quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
-                    batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
-                    enable_teacache_checkbox, teacache_thresh_slider],
-            outputs=[config_status, config_dropdown]
-        )
         load_config_button.click(
             fn=load_config,
             inputs=[config_dropdown],
@@ -1379,8 +1371,27 @@ if __name__ == "__main__":
                 quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
                 batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
                 config_name_textbox,
-                enable_teacache_checkbox, teacache_thresh_slider
+                enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox
             ]
+        )
+
+        save_config_button.click(
+            fn=save_config,
+            inputs=[
+                config_name_textbox, model_choice_radio, vram_preset_radio, aspect_ratio_radio, width_slider, height_slider,
+                auto_crop_checkbox, auto_scale_checkbox, tiled_checkbox, inference_steps_slider, pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                num_persistent_text, torch_dtype_radio,
+                lora_dropdown, lora_alpha_slider,
+                lora_dropdown_2, lora_alpha_slider_2,
+                lora_dropdown_3, lora_alpha_slider_3,
+                lora_dropdown_4, lora_alpha_slider_4,
+                negative_prompt, save_prompt_checkbox, multiline_checkbox,
+                num_generations, use_random_seed_checkbox, seed_input,
+                quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
+                batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
+                enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox
+            ],
+            outputs=[config_status, config_dropdown]
         )
 
         demo.launch(share=args.share, inbrowser=True)
