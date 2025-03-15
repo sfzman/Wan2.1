@@ -1285,11 +1285,26 @@ if __name__ == "__main__":
                 open_outputs_button = gr.Button("Open Outputs Folder")
 
         # Register change callbacks
+        
+        # When model choice or VRAM preset changes update aspect ratio options, width, height, and persistent param.
         model_choice_radio.change(
             fn=update_model_settings,
             inputs=[model_choice_radio, vram_preset_radio],
             outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
         )
+        # Also trigger when GPU VRAM Preset is changed.
+        vram_preset_radio.change(
+            fn=update_model_settings,
+            inputs=[model_choice_radio, vram_preset_radio],
+            outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
+        )
+        # When aspect ratio changes update width and height.
+        aspect_ratio_radio.change(
+            fn=update_width_height,
+            inputs=[aspect_ratio_radio, model_choice_radio],
+            outputs=[width_slider, height_slider]
+        )
+        
         # New: Update TeaCache Model ID based on model choice.
         model_choice_radio.change(
             fn=update_tea_cache_model_id,
