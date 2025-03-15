@@ -1158,7 +1158,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V32 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V34 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1229,8 +1229,8 @@ if __name__ == "__main__":
                 with gr.Row():
                     show_more_lora_button = gr.Button("Show More LoRAs")
                     more_lora_state = gr.State(False)
-                more_lora_container = gr.Column(visible=False)
-                with gr.Column(visible=False):
+                # Use a single container for extra LoRA fields and assign it to more_lora_container.
+                with gr.Column(visible=False) as more_lora_container:
                     lora_dropdown_2 = gr.Dropdown(label="LoRA Model 2", choices=get_lora_choices(), value=config_loaded.get("lora_model_2", "None"))
                     lora_alpha_slider_2 = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=config_loaded.get("lora_alpha_2", 1.0), label="LoRA Scale 2")
                     lora_dropdown_3 = gr.Dropdown(label="LoRA Model 3", choices=get_lora_choices(), value=config_loaded.get("lora_model_3", "None"))
@@ -1238,7 +1238,6 @@ if __name__ == "__main__":
                     lora_dropdown_4 = gr.Dropdown(label="LoRA Model 4", choices=get_lora_choices(), value=config_loaded.get("lora_model_4", "None"))
                     lora_alpha_slider_4 = gr.Slider(minimum=0.1, maximum=2.0, step=0.1, value=config_loaded.get("lora_alpha_4", 1.0), label="LoRA Scale 4")
                 show_more_lora_button.click(fn=toggle_lora_visibility, inputs=[more_lora_state], outputs=[more_lora_container, more_lora_state, show_more_lora_button])
-
                 with gr.Row():
                     tar_lang = gr.Radio(choices=["CH", "EN"], label="Target language for prompt enhance", value=config_loaded.get("tar_lang", "EN"))
                     enhance_button = gr.Button("Prompt Enhance")
