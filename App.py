@@ -791,7 +791,8 @@ def generate_videos(
                 current_seed = random.randint(0, 2**32 - 1)
             else:
                 try:
-                    current_seed = int(seed_input) if seed_input.strip() != "" else 0
+                    base_seed = int(seed_input.strip()) if seed_input.strip() != "" else 0
+                    current_seed = base_seed + iteration - 1
                 except:
                     current_seed = 0
             last_used_seed = current_seed
@@ -1006,6 +1007,8 @@ def batch_process_videos(
     total_files = len(images)
     log_text += f"[CMD] Found {total_files} image files in folder {folder_path}\n"
     
+    seed_counter = 0  # Counter for manual seed incrementation
+    
     for image_file in images:
         if cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user.\n"
@@ -1038,7 +1041,9 @@ def batch_process_videos(
             current_seed = random.randint(0, 2**32 - 1)
         else:
             try:
-                current_seed = int(seed_input) if seed_input.strip() != "" else 0
+                base_seed = int(seed_input.strip()) if seed_input.strip() != "" else 0
+                current_seed = base_seed + seed_counter
+                seed_counter += 1
             except:
                 current_seed = 0
 
@@ -1303,7 +1308,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V37 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V38 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
