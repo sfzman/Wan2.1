@@ -473,9 +473,9 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "0",
             "16GB": "0",
             "24GB": "4,250,000,000",
-            "32GB": "7,000,000,000",
+            "32GB": "8,250,000,000",
             "48GB": "22,000,000,000",
-            "80GB": "70,000,000,000"
+            "80GB": "22,000,000,000"
         }
         resolution_choices = list(ASPECT_RATIOS_14b.keys())
         default_aspect = "16:9"
@@ -489,8 +489,8 @@ def update_vram_and_resolution(model_choice, preset):
             "16GB": "0",
             "24GB": "3,000,000,000",
             "32GB": "4,500,000,000",
-            "48GB": "12000000000",
-            "80GB": "70000000000"
+            "48GB": "22,000,000,000",
+            "80GB": "22,000,000,000"
         }
         resolution_choices = list(ASPECT_RATIOS_14b.keys())
         default_aspect = "16:9"
@@ -503,9 +503,9 @@ def update_vram_and_resolution(model_choice, preset):
             "12GB": "1,500,000,000",
             "16GB": "3,500,000,000",
             "24GB": "8,000,000,000",
-            "32GB": "9500000000",
-            "48GB": "20000000000",
-            "80GB": "70000000000"
+            "32GB": "10,000,000,000",
+            "48GB": "14,500,000,000",
+            "80GB": "22,000,000,000"
         }
         resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
         default_aspect = "16:9"
