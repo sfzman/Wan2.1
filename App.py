@@ -447,87 +447,170 @@ ASPECT_RATIOS_14b = {
     "5:4":  (1072, 864),
 }
 
-def update_vram_and_resolution(model_choice, preset):
+# Updated function: now takes torch_dtype as an additional parameter
+def update_vram_and_resolution(model_choice, preset, torch_dtype):
     print(model_choice)
-    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
-        mapping = {
-            "4GB": "0",
-            "6GB": "500,000,000",
-            "8GB": "7,000,000,000",
-            "10GB": "7,000,000,000",
-            "12GB": "7,000,000,000",
-            "16GB": "7,000,000,000",
-            "24GB": "7,000,000,000",
-            "32GB": "7,000,000,000",
-            "48GB": "7,000,000,000",
-            "80GB": "7,000,000,000"
-        }
-        resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
-        default_aspect = "16:9"
-    elif model_choice == "WAN 2.1 14B Text-to-Video":
-        mapping = {
-            "4GB": "0",
-            "6GB": "0",
-            "8GB": "0",
-            "10GB": "0",
-            "12GB": "0",
-            "16GB": "0",
-            "24GB": "4,250,000,000",
-            "32GB": "8,250,000,000",
-            "48GB": "22,000,000,000",
-            "80GB": "22,000,000,000"
-        }
-        resolution_choices = list(ASPECT_RATIOS_14b.keys())
-        default_aspect = "16:9"
-    elif model_choice == "WAN 2.1 14B Image-to-Video 720P":
-        mapping = {
-            "4GB": "0",
-            "6GB": "0",
-            "8GB": "0",
-            "10GB": "0",
-            "12GB": "0",
-            "16GB": "0",
-            "24GB": "3,000,000,000",
-            "32GB": "4,500,000,000",
-            "48GB": "22,000,000,000",
-            "80GB": "22,000,000,000"
-        }
-        resolution_choices = list(ASPECT_RATIOS_14b.keys())
-        default_aspect = "16:9"
-    elif model_choice == "WAN 2.1 14B Image-to-Video 480P":
-        mapping = {
-            "4GB": "0",
-            "6GB": "0",
-            "8GB": "0",
-            "10GB": "0",
-            "12GB": "1,500,000,000",
-            "16GB": "3,500,000,000",
-            "24GB": "8,000,000,000",
-            "32GB": "10,000,000,000",
-            "48GB": "14,500,000,000",
-            "80GB": "22,000,000,000"
-        }
-        resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
-        default_aspect = "16:9"
+    if torch_dtype == "torch.float8_e4m3fn":
+        if model_choice == "WAN 2.1 14B Text-to-Video":
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "0",
+                "16GB": "0",
+                "24GB": "8,750,000,000",
+                "32GB": "22,000,000,000",
+                "48GB": "22,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_14b.keys())
+            default_aspect = "16:9"
+        elif model_choice == "WAN 2.1 14B Image-to-Video 720P":
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "0",
+                "16GB": "0",
+                "24GB": "6,000,000,000",
+                "32GB": "16,000,000,000",
+                "48GB": "22,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_14b.keys())
+            default_aspect = "16:9"
+        elif model_choice == "WAN 2.1 14B Image-to-Video 480P":
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "2,500,000,000",
+                "16GB": "7,500,000,000",
+                "24GB": "15,000,000,000",
+                "32GB": "22,000,000,000",
+                "48GB": "22,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
+            default_aspect = "16:9"
+        else:
+            # For other models, fallback to BF16 mapping
+            if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
+                mapping = {
+                    "4GB": "0",
+                    "6GB": "500,000,000",
+                    "8GB": "7,000,000,000",
+                    "10GB": "7,000,000,000",
+                    "12GB": "7,000,000,000",
+                    "16GB": "7,000,000,000",
+                    "24GB": "7,000,000,000",
+                    "32GB": "7,000,000,000",
+                    "48GB": "7,000,000,000",
+                    "80GB": "7,000,000,000"
+                }
+                resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
+                default_aspect = "16:9"
+            else:
+                mapping = {
+                    "4GB": "0",
+                    "6GB": "0",
+                    "8GB": "0",
+                    "10GB": "0",
+                    "12GB": "0",
+                    "16GB": "0",
+                    "24GB": "3,000,000,000",
+                    "32GB": "6,750,000,000",
+                    "48GB": "16,000,000,000",
+                    "80GB": "22,000,000,000"
+                }
+                resolution_choices = list(ASPECT_RATIOS_14b.keys())
+                default_aspect = "16:9"
+        return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
     else:
-        mapping = {
-            "4GB": "0",
-            "6GB": "0",
-            "8GB": "0",
-            "10GB": "0",
-            "12GB": "0",
-            "16GB": "0",
-            "24GB": "0",
-            "32GB": "12000000000",
-            "48GB": "12000000000",
-            "80GB": "70000000000"
-        }
-        resolution_choices = list(ASPECT_RATIOS_14b.keys())
-        default_aspect = "16:9"
-    return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
+        # BF16 mappings (unchanged)
+        if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
+            mapping = {
+                "4GB": "0",
+                "6GB": "500,000,000",
+                "8GB": "7,000,000,000",
+                "10GB": "7,000,000,000",
+                "12GB": "7,000,000,000",
+                "16GB": "7,000,000,000",
+                "24GB": "7,000,000,000",
+                "32GB": "7,000,000,000",
+                "48GB": "7,000,000,000",
+                "80GB": "7,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
+            default_aspect = "16:9"
+        elif model_choice == "WAN 2.1 14B Text-to-Video":
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "0",
+                "16GB": "0",
+                "24GB": "4,250,000,000",
+                "32GB": "8,250,000,000",
+                "48GB": "22,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_14b.keys())
+            default_aspect = "16:9"
+        elif model_choice == "WAN 2.1 14B Image-to-Video 720P":
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "0",
+                "16GB": "0",
+                "24GB": "3,000,000,000",
+                "32GB": "6,750,000,000",
+                "48GB": "16,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_14b.keys())
+            default_aspect = "16:9"
+        elif model_choice == "WAN 2.1 14B Image-to-Video 480P":
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "1,500,000,000",
+                "16GB": "3,500,000,000",
+                "24GB": "8,000,000,000",
+                "32GB": "12,000,000,000",
+                "48GB": "22,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
+            default_aspect = "16:9"
+        else:
+            mapping = {
+                "4GB": "0",
+                "6GB": "0",
+                "8GB": "0",
+                "10GB": "0",
+                "12GB": "0",
+                "16GB": "0",
+                "24GB": "3,000,000,000",
+                "32GB": "6,750,000,000",
+                "48GB": "16,000,000,000",
+                "80GB": "22,000,000,000"
+            }
+            resolution_choices = list(ASPECT_RATIOS_14b.keys())
+            default_aspect = "16:9"
+        return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
 
-def update_model_settings(model_choice, current_vram_preset):
-    num_persistent_val, aspect_options, default_aspect = update_vram_and_resolution(model_choice, current_vram_preset)
+# Updated update_model_settings to include torch_dtype
+def update_model_settings(model_choice, current_vram_preset, torch_dtype):
+    num_persistent_val, aspect_options, default_aspect = update_vram_and_resolution(model_choice, current_vram_preset, torch_dtype)
     if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P":
         default_width, default_height = ASPECT_RATIOS_1_3b.get(default_aspect, (832, 480))
     else:
@@ -550,7 +633,10 @@ def update_vram_on_change(preset, model_choice):
     """
     When the VRAM preset changes, update the num_persistent text field based on the current model.
     """
-    num_persistent_val, _, _ = update_vram_and_resolution(model_choice, preset)
+    # We need torch_dtype to update correctly, but this function is only used in generation.
+    # For consistency, we'll use the value from config_loaded for torch_dtype.
+    torch_dtype = config_loaded.get("torch_dtype", "torch.bfloat16")
+    num_persistent_val, _, _ = update_vram_and_resolution(model_choice, preset, torch_dtype)
     return num_persistent_val
 
 def prompt_enc(prompt, tar_lang):
@@ -1217,7 +1303,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V36 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V37 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1345,12 +1431,17 @@ if __name__ == "__main__":
         
         model_choice_radio.change(
             fn=update_model_settings,
-            inputs=[model_choice_radio, vram_preset_radio],
+            inputs=[model_choice_radio, vram_preset_radio, torch_dtype_radio],
             outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
         )
         vram_preset_radio.change(
             fn=update_model_settings,
-            inputs=[model_choice_radio, vram_preset_radio],
+            inputs=[model_choice_radio, vram_preset_radio, torch_dtype_radio],
+            outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
+        )
+        torch_dtype_radio.change(
+            fn=update_model_settings,
+            inputs=[model_choice_radio, vram_preset_radio, torch_dtype_radio],
             outputs=[aspect_ratio_radio, width_slider, height_slider, num_persistent_text]
         )
         aspect_ratio_radio.change(
