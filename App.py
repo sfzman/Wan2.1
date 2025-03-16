@@ -487,8 +487,8 @@ def update_vram_and_resolution(model_choice, preset):
             "10GB": "0",
             "12GB": "0",
             "16GB": "0",
-            "24GB": "0",
-            "32GB": "3500000000",
+            "24GB": "2,000,000,000",
+            "32GB": "3,500,000,000",
             "48GB": "12000000000",
             "80GB": "70000000000"
         }
@@ -633,7 +633,8 @@ def generate_videos(
         if input_image is not None:
             original_image = input_image.copy()
 
-    vram_value = num_persistent_input
+    num_persistent_input = str(num_persistent_input).replace(",", "")
+    vram_value = int(num_persistent_input)
 
     # Process LoRA inputs into a list.
     effective_loras = []
@@ -858,8 +859,8 @@ def batch_process_videos(
 
     target_width = int(width)
     target_height = int(height)
-    
-    vram_value = num_persistent_input
+    num_persistent_input = str(num_persistent_input).replace(",", "")
+    vram_value = int(num_persistent_input)
     if model_choice_radio == "WAN 2.1 14B Image-to-Video 720P":
         model_choice = "14B_image_720p"
     else:
@@ -1124,6 +1125,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
                                   os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "models_t5_umt5-xxl-enc-bf16.pth"))
         vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
                                   os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "Wan2.1_VAE.pth"))
+        model_manager.load_models([clip_path], torch_dtype=torch.float32)
         model_manager.load_models(
             [
                 [
@@ -1135,12 +1137,11 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
                     os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00006-of-00007.safetensors"),
                     os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-720P", "diffusion_pytorch_model-00007-of-00007.safetensors"),
                 ],
-                clip_path,
                 t5_path,
                 vae_path,
             ],
             torch_dtype=torch_dtype,
-        )
+        )        
     elif model_choice == "14B_image_480p":
         clip_path = get_common_file(os.path.join("models", "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"),
                                     os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"))
@@ -1148,6 +1149,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
                                   os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "models_t5_umt5-xxl-enc-bf16.pth"))
         vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
                                   os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "Wan2.1_VAE.pth"))
+        model_manager.load_models([clip_path], torch_dtype=torch.float32)                                  
         model_manager.load_models(
             [
                 [
@@ -1159,7 +1161,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
                     os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00006-of-00007.safetensors"),
                     os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "diffusion_pytorch_model-00007-of-00007.safetensors"),
                 ],
-                clip_path,
                 t5_path,
                 vae_path,
             ],
@@ -1216,7 +1217,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V35 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V36 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1267,7 +1268,7 @@ if __name__ == "__main__":
                     num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value=config_loaded.get("num_persistent", "12000000000"))
                     torch_dtype_radio = gr.Radio(
                         choices=["torch.float8_e4m3fn", "torch.bfloat16"],
-                        label="Torch DType: float8 (FP8) reduces VRAM and RAM Usage",
+                        label="torch.float8_e4m3fn is FP8 and reduces VRAM and RAM usage a lot with little quality loss. torch.bfloat16 is BF16 (max quality)",
                         value=config_loaded.get("torch_dtype", "torch.bfloat16")
                     )
                 gr.Markdown("### TeaCache Settings")
