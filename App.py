@@ -1303,7 +1303,7 @@ def apply_fast_preset():
     """
     Sets inference_steps to 20, TeaCache L1 Threshold to 0.25, and Sigma Shift to 10.
     """
-    return 50, 0.25, 10
+    return 50, True , 0.25, 10
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1493,7 +1493,7 @@ if __name__ == "__main__":
             outputs=[video_output, status_output, last_seed_output]
         )
         cancel_button.click(fn=cancel_generation, outputs=status_output)
-        fast_preset_button.click(fn=apply_fast_preset, inputs=[], outputs=[inference_steps_slider, tea_cache_l1_thresh_slider, sigma_shift_slider])
+        fast_preset_button.click(fn=apply_fast_preset, inputs=[], outputs=[inference_steps_slider, enable_teacache_checkbox , tea_cache_l1_thresh_slider, sigma_shift_slider])
         open_outputs_button.click(fn=open_outputs_folder, outputs=status_output)
         batch_process_button.click(
             fn=batch_process_videos,
