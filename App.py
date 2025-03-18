@@ -927,10 +927,15 @@ def cancel_generation():
     print("[CMD] Cancel button pressed.")
     return "Cancelling generation..."
 
+# ------------------------------
+# Updated batch_process_videos function with missing parameters fixed:
+# Added parameters: tiled, cfg_scale, sigma_shift.
+# ------------------------------
 def batch_process_videos(
     default_prompt, folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
     torch_dtype, num_frames, inference_steps, aspect_ratio, width, height, auto_crop, auto_scale,
+    tiled, cfg_scale, sigma_shift,
     save_prompt, pr_rife_enabled, pr_rife_radio, lora_model, lora_alpha,
     lora_model_2, lora_alpha_2,
     lora_model_3, lora_alpha_3,
@@ -990,10 +995,12 @@ def batch_process_videos(
     common_args_base = {
         "negative_prompt": negative_prompt,
         "num_inference_steps": int(inference_steps),
-        "tiled": True,
+        "tiled": tiled,
         "width": target_width,
         "height": target_height,
         "num_frames": int(num_frames),
+        "cfg_scale": cfg_scale,
+        "sigma_shift": sigma_shift
     }
     
     if not os.path.isdir(folder_path):
@@ -1135,6 +1142,7 @@ def batch_process_videos(
                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
                 log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
+        # End of each image file processing
     loaded_pipeline = None
     loaded_pipeline_config = {}
     gc.collect()
@@ -1301,9 +1309,9 @@ def refresh_lora_list():
 # ------------------------------
 def apply_fast_preset():
     """
-    Sets inference_steps to 20, TeaCache L1 Threshold to 0.25, and Sigma Shift to 10.
+    Sets inference_steps to 50, TeaCache L1 Threshold to 0.25, and Sigma Shift to 10.
     """
-    return 50, True , 0.25, 10
+    return 50, True, 0.25, 10
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1321,7 +1329,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V40 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V41 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
@@ -1482,8 +1490,8 @@ if __name__ == "__main__":
                 quality_slider, fps_slider,
                 model_choice_radio, vram_preset_radio, num_persistent_text, torch_dtype_radio,
                 num_frames_slider,
-                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, auto_scale_checkbox, tiled_checkbox, inference_steps_slider,
-                pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
+                aspect_ratio_radio, width_slider, height_slider, auto_crop_checkbox, auto_scale_checkbox, tiled_checkbox,
+                inference_steps_slider, pr_rife_checkbox, pr_rife_radio, cfg_scale_slider, sigma_shift_slider,
                 enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox,
                 lora_dropdown, lora_alpha_slider,
                 lora_dropdown_2, lora_alpha_slider_2,
@@ -1518,7 +1526,11 @@ if __name__ == "__main__":
                 aspect_ratio_radio, 
                 width_slider, 
                 height_slider, 
-                auto_crop_checkbox, auto_scale_checkbox,
+                auto_crop_checkbox, 
+                auto_scale_checkbox,
+                tiled_checkbox,
+                cfg_scale_slider,
+                sigma_shift_slider,
                 save_prompt_batch_checkbox,
                 pr_rife_checkbox, 
                 pr_rife_radio,
@@ -1526,7 +1538,9 @@ if __name__ == "__main__":
                 lora_dropdown_2, lora_alpha_slider_2,
                 lora_dropdown_3, lora_alpha_slider_3,
                 lora_dropdown_4, lora_alpha_slider_4,
-                enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox
+                enable_teacache_checkbox, 
+                tea_cache_l1_thresh_slider, 
+                tea_cache_model_id_textbox
             ],
             outputs=batch_status_output
         )
