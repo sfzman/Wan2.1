@@ -6,12 +6,15 @@ import argparse
 import time
 import tempfile
 import json
-import gc  # Added for garbage collection
-import re  # Added for prompt processing
+import gc
+import re
+
+import psutil  # new import to get system RAM
+DEFAULT_CLEAR_CACHE = True if psutil.virtual_memory().total < 63 * 1024**3 else False
 
 import torch
 import gradio as gr
-from PIL import Image, ImageOps  # Modified: Import ImageOps for orientation fix
+from PIL import Image, ImageOps
 import cv2
 
 import wan
@@ -21,9 +24,6 @@ from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
-# ------------------------------
-# Helper function for common model files
-# ------------------------------
 def get_common_file(new_path, old_path):
     """
     Returns the common model file path.
@@ -38,9 +38,6 @@ def get_common_file(new_path, old_path):
         print(f"[WARNING] Neither {new_path} nor {old_path} found. Using {old_path} as fallback.")
         return old_path
 
-# ------------------------------
-# Config management functions
-# ------------------------------
 CONFIG_DIR = "configs"
 LAST_CONFIG_FILE = os.path.join(CONFIG_DIR, "last_used_config.txt")
 DEFAULT_CONFIG_NAME = "Default"
@@ -53,7 +50,7 @@ def get_default_config():
         "width": 832,
         "height": 480,
         "auto_crop": True,
-        "auto_scale": False,  # New: auto scale image setting (off by default)
+        "auto_scale": False,
         "tiled": True,
         "inference_steps": 50,
         "pr_rife": True,
@@ -70,6 +67,7 @@ def get_default_config():
         "lora_alpha_3": 1.0,
         "lora_model_4": "None",
         "lora_alpha_4": 1.0,
+        "clear_cache_after_gen": DEFAULT_CLEAR_CACHE,  # <-- new setting
         "negative_prompt": "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down",
         "save_prompt": True,
         "multiline": False,
@@ -85,7 +83,6 @@ def get_default_config():
         "batch_output_folder": "batch_outputs",
         "skip_overwrite": True,
         "save_prompt_batch": True,
-        # TeaCache defaults & new parameters:
         "enable_teacache": False,
         "tea_cache_l1_thresh": 0.15,
         "tea_cache_model_id": "Wan2.1-T2V-1.3B"
@@ -96,7 +93,6 @@ if not os.path.exists(CONFIG_DIR):
 
 default_config = get_default_config()
 
-# Load last used config or create default if missing.
 if os.path.exists(LAST_CONFIG_FILE):
     with open(LAST_CONFIG_FILE, "r", encoding="utf-8") as f:
         last_config_name = f.read().strip()
@@ -143,7 +139,7 @@ def get_config_list():
 
 def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, height, auto_crop, auto_scale, tiled, inference_steps,
                 pr_rife, pr_rife_multiplier, cfg_scale, sigma_shift, num_persistent, torch_dtype, lora_model, lora_alpha,
-                lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4,
+                lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4, clear_cache_after_gen,
                 negative_prompt, save_prompt, multiline, num_generations, use_random_seed, seed, quality, fps, num_frames,
                 denoising_strength, tar_lang, batch_folder, batch_output_folder, skip_overwrite, save_prompt_batch,
                 enable_teacache, tea_cache_l1_thresh, tea_cache_model_id):
@@ -173,6 +169,7 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
         "lora_alpha_3": lora_alpha_3,
         "lora_model_4": lora_model_4,
         "lora_alpha_4": lora_alpha_4,
+        "clear_cache_after_gen": clear_cache_after_gen,  # new setting saved
         "negative_prompt": negative_prompt,
         "save_prompt": save_prompt,
         "multiline": multiline,
@@ -228,6 +225,7 @@ def load_config(selected_config):
             default_vals["lora_alpha_3"],
             default_vals["lora_model_4"],
             default_vals["lora_alpha_4"],
+            default_vals["clear_cache_after_gen"],
             default_vals["negative_prompt"],
             default_vals["save_prompt"],
             default_vals["multiline"],
@@ -243,7 +241,7 @@ def load_config(selected_config):
             default_vals["batch_output_folder"],
             default_vals["skip_overwrite"],
             default_vals["save_prompt_batch"],
-            "",           # config_name textbox value (reset to empty)
+            "",
             default_vals["enable_teacache"],
             default_vals["tea_cache_l1_thresh"],
             default_vals["tea_cache_model_id"]
@@ -277,6 +275,7 @@ def load_config(selected_config):
         config_data.get("lora_alpha_3", 1.0),
         config_data.get("lora_model_4", "None"),
         config_data.get("lora_alpha_4", 1.0),
+        config_data.get("clear_cache_after_gen", DEFAULT_CLEAR_CACHE),
         config_data.get("negative_prompt", "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down"),
         config_data.get("save_prompt", True),
         config_data.get("multiline", False),
@@ -292,21 +291,13 @@ def load_config(selected_config):
         config_data.get("batch_output_folder", "batch_outputs"),
         config_data.get("skip_overwrite", True),
         config_data.get("save_prompt_batch", True),
-        "",   # config_name textbox (reset to empty so user can type a new one)
+        "",
         config_data.get("enable_teacache", False),
-        config_data.get("tea_cache_l1_thresh", 0.05),
+        config_data.get("tea_cache_l1_thresh", 0.15),
         config_data.get("tea_cache_model_id", "Wan2.1-T2V-1.3B")
     )
 
-# ------------------------------
-# New helper functions for prompt processing and auto scale
-# ------------------------------
-
 def process_random_prompt(prompt):
-    """
-    Process all occurrences of <random: X, Y, Z, ...> in the prompt.
-    Each such pattern is replaced by one randomly selected choice.
-    """
     pattern = r'<random:\s*([^>]+)>'
     def replacer(match):
         options = [option.strip() for option in match.group(1).split(',') if option.strip()]
@@ -316,11 +307,6 @@ def process_random_prompt(prompt):
     return re.sub(pattern, replacer, prompt)
 
 def compute_auto_scale_dimensions(image, default_width, default_height):
-    """
-    Compute new dimensions for the image such that the total pixel area is
-    close to default_width x default_height while keeping aspect ratio intact.
-    Both dimensions are made divisible by 16.
-    """
     target_area = default_width * default_height
     orig_w, orig_h = image.size
     if orig_w * orig_h <= target_area:
@@ -335,10 +321,6 @@ def compute_auto_scale_dimensions(image, default_width, default_height):
     return new_w, new_h
 
 def update_target_dimensions(image, auto_scale, current_width, current_height):
-    """
-    If auto_scale is selected and an image is provided, compute the new width and height.
-    Otherwise, return the current width and height.
-    """
     if auto_scale and image is not None:
         try:
             new_w, new_h = compute_auto_scale_dimensions(image, current_width, current_height)
@@ -347,20 +329,10 @@ def update_target_dimensions(image, auto_scale, current_width, current_height):
             return current_width, current_height
     return current_width, current_height
 
-# ------------------------------
-# Existing helper functions for images and LoRA
-# ------------------------------
 def auto_crop_image(image, target_width, target_height):
-    """
-    Crops and downscales the image to exactly the target resolution.
-    The function first crops the image centrally to match the target aspect ratio,
-    then resizes it to the target dimensions.
-    """
     w, h = image.size
     target_ratio = target_width / target_height
     current_ratio = w / h
-
-    # Crop the image to the desired aspect ratio.
     if current_ratio > target_ratio:
         new_width = int(h * target_ratio)
         left = (w - new_width) // 2
@@ -375,11 +347,6 @@ def auto_crop_image(image, target_width, target_height):
     return image
 
 def auto_scale_image(image, target_width, target_height):
-    """
-    Downscales the image while keeping its aspect ratio so that the total pixel count
-    is very close to target_width x target_height but ensures both dimensions are divisible by 16.
-    If the image is already smaller than the target area, it is returned unchanged.
-    """
     target_area = target_width * target_height
     orig_w, orig_h = image.size
     if orig_w * orig_h <= target_area:
@@ -394,18 +361,11 @@ def auto_scale_image(image, target_width, target_height):
     return image.resize((new_w, new_h), Image.LANCZOS)
 
 def toggle_lora_visibility(current_visibility):
-    """
-    Toggles the visibility of the extra LoRA UI elements.
-    Returns an update for the container, the new state and a new button label.
-    """
     new_visibility = not current_visibility
     new_label = "Hide More LoRAs" if new_visibility else "Show More LoRAs"
     return gr.update(visible=new_visibility), new_visibility, new_label
 
 def update_tea_cache_model_id(model_choice):
-    """
-    Returns the TeaCache Model ID based on the selected model.
-    """
     if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
         return "Wan2.1-T2V-1.3B"
     elif model_choice == "WAN 2.1 14B Text-to-Video":
@@ -446,7 +406,6 @@ ASPECT_RATIOS_14b = {
     "5:4":  (1072, 864),
 }
 
-# Updated function: now takes torch_dtype as an additional parameter
 def update_vram_and_resolution(model_choice, preset, torch_dtype):
     print(model_choice)
     if torch_dtype == "torch.float8_e4m3fn":
@@ -496,7 +455,6 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
             resolution_choices = list(ASPECT_RATIOS_1_3b.keys())
             default_aspect = "16:9"
         else:
-            # For other models, fallback to BF16 mapping
             if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
                 mapping = {
                     "4GB": "0",
@@ -529,7 +487,6 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 default_aspect = "16:9"
         return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
     else:
-        # BF16 mappings (unchanged)
         if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)":
             mapping = {
                 "4GB": "0",
@@ -607,7 +564,6 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
             default_aspect = "16:9"
         return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
 
-# Updated update_model_settings to include torch_dtype
 def update_model_settings(model_choice, current_vram_preset, torch_dtype):
     num_persistent_val, aspect_options, default_aspect = update_vram_and_resolution(model_choice, current_vram_preset, torch_dtype)
     if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P":
@@ -629,18 +585,12 @@ def update_width_height(aspect_ratio, model_choice):
     return default_width, default_height
 
 def update_vram_on_change(preset, model_choice):
-    """
-    When the VRAM preset changes, update the num_persistent text field based on the current model.
-    """
-    # We need torch_dtype to update correctly, but this function is only used in generation.
-    # For consistency, we'll use the value from config_loaded for torch_dtype.
     torch_dtype = config_loaded.get("torch_dtype", "torch.bfloat16")
     num_persistent_val, _, _ = update_vram_and_resolution(model_choice, preset, torch_dtype)
     return num_persistent_val
 
 def prompt_enc(prompt, tar_lang):
     global prompt_expander, loaded_pipeline, loaded_pipeline_config, args
-
     if prompt_expander is None:
         if args.prompt_extend_method == "dashscope":
             prompt_expander = DashScopePromptExpander(model_name=args.prompt_extend_model, is_vl=False)
@@ -661,16 +611,14 @@ def generate_videos(
     lora_model, lora_alpha,
     lora_model_2, lora_alpha_2,
     lora_model_3, lora_alpha_3,
-    lora_model_4, lora_alpha_4
+    lora_model_4, lora_alpha_4,
+    clear_cache_after_gen  # new parameter added at the end
 ):
-
     global loaded_pipeline, loaded_pipeline_config, cancel_flag
     cancel_flag = False
     log_text = ""
     last_used_seed = None
     overall_start_time = time.time()
-
-    # Set model choice and resolution mapping based on the selected model.
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
         model_choice = "1.3B"
         d = ASPECT_RATIOS_1_3b
@@ -685,10 +633,8 @@ def generate_videos(
         d = ASPECT_RATIOS_1_3b
     else:
         return "", "Invalid model choice.", ""
-    
     target_width = int(width)
     target_height = int(height)
-
     if model_choice == "1.3B" and input_video is not None:
         original_video_path = input_video if isinstance(input_video, str) else input_video.name
         cap = cv2.VideoCapture(original_video_path)
@@ -702,12 +648,10 @@ def generate_videos(
         cap.release()
     else:
         effective_num_frames = int(num_frames)
-
     if auto_crop:
         if model_choice == "1.3B" and input_video is not None:
             input_video_path = input_video if isinstance(input_video, str) else input_video.name
             print(f"[CMD] Auto cropping input video: {input_video_path}")
-            # The auto_crop_video function should be defined or imported accordingly.
             input_video_path = auto_crop_video(input_video_path, target_width, target_height, effective_num_frames, desired_fps=16)
             input_video = input_video_path
         elif input_image is not None:
@@ -717,11 +661,8 @@ def generate_videos(
     else:
         if input_image is not None:
             original_image = input_image.copy()
-
     num_persistent_input = str(num_persistent_input).replace(",", "")
     vram_value = int(num_persistent_input)
-
-    # Process LoRA inputs into a list.
     effective_loras = []
     if lora_model and lora_model != "None":
         effective_loras.append((os.path.join("LoRAs", lora_model), lora_alpha))
@@ -731,7 +672,6 @@ def generate_videos(
         effective_loras.append((os.path.join("LoRAs", lora_model_3), lora_alpha_3))
     if lora_model_4 and lora_model_4 != "None":
         effective_loras.append((os.path.join("LoRAs", lora_model_4), lora_alpha_4))
-
     if loaded_pipeline is None or loaded_pipeline_config != {
         "model_choice": model_choice,
         "torch_dtype": torch_dtype,
@@ -759,16 +699,12 @@ def generate_videos(
             "lora_model_4": lora_model_4,
             "lora_alpha_4": lora_alpha_4
         }
-
     if multi_line:
         prompts_list = [line.strip() for line in prompt.splitlines() if line.strip()]
     else:
         prompts_list = [prompt.strip()]
-
     total_iterations = len(prompts_list) * int(num_generations)
     iteration = 0
-
-    # Modified: Process the random tokens for every generation iteration.
     for p in prompts_list:
         for i in range(int(num_generations)):
             final_prompt = process_random_prompt(p)
@@ -777,11 +713,12 @@ def generate_videos(
                 duration = time.time() - overall_start_time
                 log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                 log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-                loaded_pipeline = None
-                loaded_pipeline_config = {}
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                if clear_cache_after_gen:
+                    loaded_pipeline = None
+                    loaded_pipeline_config = {}
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 return None, log_text, str(last_used_seed or "")
             iteration += 1
             gen_start = time.time()
@@ -808,20 +745,16 @@ def generate_videos(
                 "cfg_scale": cfg_scale,
                 "sigma_shift": sigma_shift,
             }
-            # Add TeaCache parameters to common_args.
             if enable_teacache:
                 common_args["tea_cache_l1_thresh"] = tea_cache_l1_thresh
                 common_args["tea_cache_model_id"] = tea_cache_model_id
             else:
                 common_args["tea_cache_l1_thresh"] = None
                 common_args["tea_cache_model_id"] = ""
-
-            # Process based on model type.
             if model_choice == "1.3B":
                 if input_video is not None:
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
                     print(f"[CMD] Processing video-to-video with input video: {input_video_path}")
-                    # The VideoData class is used to package the input video.
                     video_obj = VideoData(input_video_path, height=target_height, width=target_width)
                     video_data = loaded_pipeline(
                         input_video=video_obj,
@@ -834,11 +767,12 @@ def generate_videos(
                         duration = time.time() - overall_start_time
                         log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                         log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-                        loaded_pipeline = None
-                        loaded_pipeline_config = {}
-                        gc.collect()
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
+                        if clear_cache_after_gen:
+                            loaded_pipeline = None
+                            loaded_pipeline_config = {}
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
                         return None, log_text, str(last_used_seed or "")
                 else:
                     video_data = loaded_pipeline(
@@ -850,11 +784,12 @@ def generate_videos(
                         duration = time.time() - overall_start_time
                         log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                         log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-                        loaded_pipeline = None
-                        loaded_pipeline_config = {}
-                        gc.collect()
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
+                        if clear_cache_after_gen:
+                            loaded_pipeline = None
+                            loaded_pipeline_config = {}
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
                         return None, log_text, str(last_used_seed or "")
                 video_filename = get_next_filename(".mp4")
             elif model_choice == "14B_text":
@@ -867,21 +802,23 @@ def generate_videos(
                     duration = time.time() - overall_start_time
                     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                     log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-                    loaded_pipeline = None
-                    loaded_pipeline_config = {}
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    if clear_cache_after_gen:
+                        loaded_pipeline = None
+                        loaded_pipeline_config = {}
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
                     return None, log_text, str(last_used_seed or "")
                 video_filename = get_next_filename(".mp4")
             elif model_choice in ["14B_image_720p", "14B_image_480p"]:
                 if input_image is None:
                     err_msg = "[CMD] Error: Image model selected but no image provided."
-                    loaded_pipeline = None
-                    loaded_pipeline_config = {}
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    if clear_cache_after_gen:
+                        loaded_pipeline = None
+                        loaded_pipeline_config = {}
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
                     return "", err_msg, str(last_used_seed or "")
                 if auto_crop:
                     processed_image = auto_crop_image(original_image, target_width, target_height)
@@ -907,26 +844,28 @@ def generate_videos(
                     duration = time.time() - overall_start_time
                     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
                     log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
+                    if clear_cache_after_gen:
+                        loaded_pipeline = None
+                        loaded_pipeline_config = {}
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    return None, log_text, str(last_used_seed or "")
+            else:
+                err_msg = "[CMD] Invalid combination of inputs."
+                if clear_cache_after_gen:
                     loaded_pipeline = None
                     loaded_pipeline_config = {}
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    return None, log_text, str(last_used_seed or "")
-            else:
-                err_msg = "[CMD] Invalid combination of inputs."
-                loaded_pipeline = None
-                loaded_pipeline_config = {}
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
                 return "", err_msg, str(last_used_seed or "")
             save_video(video_data, video_filename, fps=fps, quality=quality)
             log_text += f"[CMD] Saved video: {video_filename}\n"
             if save_prompt:
                 text_filename = os.path.splitext(video_filename)[0] + ".txt"
                 generation_details = ""
-                generation_details += f"Prompt: {final_prompt}\n"  # Save the processed prompt
+                generation_details += f"Prompt: {final_prompt}\n"
                 generation_details += f"Negative Prompt: {negative_prompt}\n"
                 generation_details += f"Used Model: {model_choice_radio}\n"
                 generation_details += f"Number of Inference Steps: {inference_steps}\n"
@@ -973,11 +912,12 @@ def generate_videos(
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
     log_text += f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds ({overall_duration/60:.2f} minutes). Last used seed: {last_used_seed}\n"
     print(f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds. Last used seed: {last_used_seed}")
-    loaded_pipeline = None
-    loaded_pipeline_config = {}
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    if clear_cache_after_gen:
+        loaded_pipeline = None
+        loaded_pipeline_config = {}
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     return last_video_path, log_text, str(last_used_seed or "")
 
 def cancel_generation():
@@ -986,9 +926,6 @@ def cancel_generation():
     print("[CMD] Cancel button pressed.")
     return "Cancelling generation..."
 
-# ------------------------------
-# Updated batch_process_videos function with missing parameters fixed:
-# Added parameters: tiled, cfg_scale, sigma_shift.
 def batch_process_videos(
     default_prompt, folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
@@ -998,17 +935,15 @@ def batch_process_videos(
     lora_model_2, lora_alpha_2,
     lora_model_3, lora_alpha_3,
     lora_model_4, lora_alpha_4,
-    enable_teacache, tea_cache_l1_thresh, tea_cache_model_id
+    enable_teacache, tea_cache_l1_thresh, tea_cache_model_id,
+    clear_cache_after_gen  # new parameter added at the end
 ):
-
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
     cancel_batch_flag = False
     log_text = ""
-    
     if model_choice_radio not in ["WAN 2.1 14B Image-to-Video 720P", "WAN 2.1 14B Image-to-Video 480P"]:
-        log_text += "[CMD] Batch processing currently only supports the WAN 2.1 14B Image-to-Video models.\n"
+        log_text += f"[CMD] Batch processing currently only supports the WAN 2.1 14B Image-to-Video models.\n"
         return log_text
-
     target_width = int(width)
     target_height = int(height)
     num_persistent_input = str(num_persistent_input).replace(",", "")
@@ -1017,7 +952,6 @@ def batch_process_videos(
         model_choice = "14B_image_720p"
     else:
         model_choice = "14B_image_480p"
-    
     effective_loras = []
     if lora_model and lora_model != "None":
         effective_loras.append((os.path.join("LoRAs", lora_model), lora_alpha))
@@ -1027,7 +961,6 @@ def batch_process_videos(
         effective_loras.append((os.path.join("LoRAs", lora_model_3), lora_alpha_3))
     if lora_model_4 and lora_model_4 != "None":
         effective_loras.append((os.path.join("LoRAs", lora_model_4), lora_alpha_4))
-    
     current_config = {
         "model_choice": model_choice,
         "torch_dtype": torch_dtype,
@@ -1041,13 +974,10 @@ def batch_process_videos(
         "lora_model_4": lora_model_4,
         "lora_alpha_4": lora_alpha_4
     }
-    
-    # Check for early cancellation
     if cancel_batch_flag:
         log_text += "[CMD] Batch processing cancelled before model loading.\n"
         cancel_batch_flag = False
         return log_text
-    
     if loaded_pipeline is None or loaded_pipeline_config != current_config:
         if effective_loras:
             for path, alpha in effective_loras:
@@ -1056,7 +986,6 @@ def batch_process_videos(
             print("[CMD] No LoRA selected for batch. Using base model.")
         loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
         loaded_pipeline_config = current_config
-
     common_args_base = {
         "negative_prompt": negative_prompt,
         "num_inference_steps": int(inference_steps),
@@ -1067,35 +996,28 @@ def batch_process_videos(
         "cfg_scale": cfg_scale,
         "sigma_shift": sigma_shift
     }
-    
     if not os.path.isdir(folder_path):
         log_text += f"[CMD] Provided folder path does not exist: {folder_path}\n"
         return log_text
-
     if not os.path.exists(batch_output_folder):
         os.makedirs(batch_output_folder)
         log_text += f"[CMD] Created batch processing outputs folder: {batch_output_folder}\n"
-
     files = os.listdir(folder_path)
     images = [f for f in files if os.path.splitext(f)[1].lower() in [".jpg", ".png", ".jpeg"]]
     total_files = len(images)
     log_text += f"[CMD] Found {total_files} image files in folder {folder_path}\n"
-    
-    seed_counter = 0  # Counter for manual seed incrementation
-    
+    seed_counter = 0
     for image_file in images:
-        
         if cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user.\n"
-            # Clean up resources when cancelled
-            loaded_pipeline = None
-            loaded_pipeline_config = {}
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if clear_cache_after_gen:
+                loaded_pipeline = None
+                loaded_pipeline_config = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             cancel_batch_flag = False
             return log_text
-        
         iter_start = time.time()
         base, ext = os.path.splitext(image_file)
         prompt_path = os.path.join(folder_path, base + ".txt")
@@ -1110,15 +1032,11 @@ def batch_process_videos(
                 prompt_content = default_prompt
             else:
                 log_text += f"[CMD] Using user made prompt txt for {image_file}: {prompt_content}\n"
-
-        # Process the random prompt tokens
         final_prompt = process_random_prompt(prompt_content)
-
         output_filename = os.path.join(batch_output_folder, base + ".mp4")
         if skip_overwrite and os.path.exists(output_filename):
             log_text += f"[CMD] Output video {output_filename} already exists, skipping {image_file}.\n"
             continue
-
         if use_random_seed:
             current_seed = random.randint(0, 2**32 - 1)
         else:
@@ -1128,83 +1046,67 @@ def batch_process_videos(
                 seed_counter += 1
             except:
                 current_seed = 0
-
         common_args = common_args_base.copy()
         common_args["prompt"] = final_prompt
         common_args["seed"] = current_seed
-
-        # Add TeaCache parameters to common_args.
         if enable_teacache:
             common_args["tea_cache_l1_thresh"] = tea_cache_l1_thresh
             common_args["tea_cache_model_id"] = tea_cache_model_id
         else:
             common_args["tea_cache_l1_thresh"] = None
             common_args["tea_cache_model_id"] = ""
-
         log_text += f"[CMD] Processing {image_file} with prompt and seed {current_seed}\n"
-        
-        # Check for cancellation before opening image
         if cancel_batch_flag:
-            log_text += "[CMD] Batch processing cancelled by user.\n"
-            # Clean up resources when cancelled
-            loaded_pipeline = None
-            loaded_pipeline_config = {}
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            log_text += "[CMD] Batch processing cancelled by user before pipeline.\n"
+            if clear_cache_after_gen:
+                loaded_pipeline = None
+                loaded_pipeline_config = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             cancel_batch_flag = False
             return log_text
-            
         try:
             image_path = os.path.join(folder_path, image_file)
-            # Modified: Apply EXIF orientation correction using ImageOps.exif_transpose
             image_obj = Image.open(image_path)
             image_obj = ImageOps.exif_transpose(image_obj)
             image_obj = image_obj.convert("RGB")
         except Exception as e:
             log_text += f"[CMD] Failed to open image {image_file}: {str(e)}\n"
             continue
-
         if auto_crop:
             processed_image = auto_crop_image(image_obj, target_width, target_height)
         elif auto_scale:
             processed_image = auto_scale_image(image_obj, target_width, target_height)
         else:
             processed_image = image_obj
-        
-        # Check for cancellation before running pipeline
         if cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user before pipeline.\n"
-            # Clean up resources when cancelled
-            loaded_pipeline = None
-            loaded_pipeline_config = {}
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if clear_cache_after_gen:
+                loaded_pipeline = None
+                loaded_pipeline_config = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             cancel_batch_flag = False
             return log_text
-        
         video_data = loaded_pipeline(
             input_image=processed_image,
             **common_args,
             cancel_fn=lambda: cancel_batch_flag
         )
-        
-        # Check for cancellation after pipeline
         if not video_data or cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user mid-run.\n"
-            # Clean up resources when cancelled
-            loaded_pipeline = None
-            loaded_pipeline_config = {}
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if clear_cache_after_gen:
+                loaded_pipeline = None
+                loaded_pipeline_config = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             cancel_batch_flag = False
             return log_text
-
         save_video(video_data, output_filename, fps=fps, quality=quality)
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
-
         if auto_crop or auto_scale:
             preprocessed_folder = "auto_pre_processed_images"
             if not os.path.exists(preprocessed_folder):
@@ -1213,12 +1115,11 @@ def batch_process_videos(
             preprocessed_image_filename = os.path.join(preprocessed_folder, f"{base_name}.png")
             processed_image.save(preprocessed_image_filename)
             log_text += f"[CMD] Saved auto processed image: {preprocessed_image_filename}\n"
-        
         generation_duration = time.time() - iter_start
         if save_prompt:
             text_filename = os.path.splitext(output_filename)[0] + ".txt"
             generation_details = ""
-            generation_details += f"Prompt: {final_prompt}\n"  # Save the processed prompt
+            generation_details += f"Prompt: {final_prompt}\n"
             generation_details += f"Negative Prompt: {negative_prompt}\n"
             generation_details += f"Used Model: {model_choice_radio}\n"
             generation_details += f"Number of Inference Steps: {inference_steps}\n"
@@ -1243,7 +1144,6 @@ def batch_process_videos(
             with open(text_filename, "w", encoding="utf-8") as f:
                 f.write(generation_details)
             log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
-
             if pr_rife_enabled:
                 multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
                 improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
@@ -1255,16 +1155,12 @@ def batch_process_videos(
                 )
                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
                 log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
-
-        # End of each image file processing
-    # Reset the cancel flag after batch processing
-    cancel_batch_flag = False
-    loaded_pipeline = None
-    loaded_pipeline_config = {}
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
+        if clear_cache_after_gen:
+            loaded_pipeline = None
+            loaded_pipeline_config = {}
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     return log_text
 
 def cancel_batch_process():
@@ -1302,7 +1198,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
     print(f"[CMD] Loading model: {model_choice} with torch dtype: {torch_dtype_str} and num_persistent_param_in_dit: {num_persistent}")
     device = "cuda"
     torch_dtype = torch.float8_e4m3fn if torch_dtype_str == "torch.float8_e4m3fn" else torch.bfloat16
-
     model_manager = ModelManager(device="cpu")
     if model_choice == "1.3B":
         t5_path = get_common_file(os.path.join("models", "models_t5_umt5-xxl-enc-bf16.pth"),
@@ -1368,7 +1263,7 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
                                   os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "models_t5_umt5-xxl-enc-bf16.pth"))
         vae_path = get_common_file(os.path.join("models", "Wan2.1_VAE.pth"),
                                   os.path.join("models", "Wan-AI", "Wan2.1-I2V-14B-480P", "Wan2.1_VAE.pth"))
-        model_manager.load_models([clip_path], torch_dtype=torch.float32)                                  
+        model_manager.load_models([clip_path], torch_dtype=torch.float32)
         model_manager.load_models(
             [
                 [
@@ -1387,7 +1282,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
         )
     else:
         raise ValueError("Invalid model choice")
-    
     if lora_path is not None:
         if isinstance(lora_path, list):
             for path, alpha in lora_path:
@@ -1396,7 +1290,6 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
         else:
             print(f"[CMD] Loading LoRA from {lora_path} with alpha {lora_alpha}")
             model_manager.load_lora(lora_path, lora_alpha=lora_alpha)
-
     pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     try:
         num_persistent_val = int(num_persistent)
@@ -1420,14 +1313,8 @@ def get_lora_choices():
 def refresh_lora_list():
     return gr.update(choices=get_lora_choices(), value="None")
 
-# ------------------------------
-# New helper function: Fast Preset
-# ------------------------------
 def apply_fast_preset():
-    """
-    Sets inference_steps to 50, TeaCache L1 Threshold to 0.25, and Sigma Shift to 10.
-    """
-    return 50, True, 0.25, 10
+    return 20, True, 0.15, 10
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -1436,19 +1323,15 @@ if __name__ == "__main__":
     parser.add_argument("--prompt_extend_model", type=str, default=None, help="The prompt extend model to use.")
     parser.add_argument("--share", action="store_true", help="Share the Gradio app publicly.")
     args = parser.parse_args()
-
-    # Global pipeline variables
     loaded_pipeline = None
     loaded_pipeline_config = {}
     cancel_flag = False
     cancel_batch_flag = False
     prompt_expander = None
-
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V43 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V44 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
-                # Model & Resolution settings
                 with gr.Row():
                     generate_button = gr.Button("Generate", variant="primary")
                     cancel_button = gr.Button("Cancel")
@@ -1482,9 +1365,14 @@ if __name__ == "__main__":
                 with gr.Row():
                     width_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("width", 832), label="Width")
                     height_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("height", 480), label="Height")
+                # New checkbox inserted before Auto Crop
                 with gr.Row():
-                    auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=config_loaded.get("auto_crop", True))
-                    auto_scale_checkbox = gr.Checkbox(label="Auto Scale", value=config_loaded.get("auto_scale", False))
+                    clear_cache_checkbox = gr.Checkbox(label="Clear model from RAM and VRAM after generation", value=config_loaded.get("clear_cache_after_gen", DEFAULT_CLEAR_CACHE))
+                    
+                    with gr.Column():
+                        auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=config_loaded.get("auto_crop", True))
+                        auto_scale_checkbox = gr.Checkbox(label="Auto Scale", value=config_loaded.get("auto_scale", False))
+                    
                     tiled_checkbox = gr.Checkbox(label="Tiled VAE Decode (Disable for 1.3B model for 12GB or more GPUs)", value=config_loaded.get("tiled", True))
                     inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=config_loaded.get("inference_steps", 50), label="Inference Steps")
                 gr.Markdown("### Increase Video FPS with Practical-RIFE")
@@ -1570,9 +1458,6 @@ if __name__ == "__main__":
                 status_output = gr.Textbox(label="Status Log", lines=20)
                 last_seed_output = gr.Textbox(label="Last Used Seed", interactive=False)
                 open_outputs_button = gr.Button("Open Outputs Folder")
-
-        # Register change callbacks
-        
         model_choice_radio.change(
             fn=update_model_settings,
             inputs=[model_choice_radio, vram_preset_radio, torch_dtype_radio],
@@ -1613,7 +1498,8 @@ if __name__ == "__main__":
                 lora_dropdown, lora_alpha_slider,
                 lora_dropdown_2, lora_alpha_slider_2,
                 lora_dropdown_3, lora_alpha_slider_3,
-                lora_dropdown_4, lora_alpha_slider_4
+                lora_dropdown_4, lora_alpha_slider_4,
+                clear_cache_checkbox  # new input appended here
             ],
             outputs=[video_output, status_output, last_seed_output]
         )
@@ -1657,7 +1543,8 @@ if __name__ == "__main__":
                 lora_dropdown_4, lora_alpha_slider_4,
                 enable_teacache_checkbox, 
                 tea_cache_l1_thresh_slider, 
-                tea_cache_model_id_textbox
+                tea_cache_model_id_textbox,
+                clear_cache_checkbox  # new input appended here as well
             ],
             outputs=batch_status_output
         )
@@ -1674,6 +1561,7 @@ if __name__ == "__main__":
                 lora_dropdown_2, lora_alpha_slider_2,
                 lora_dropdown_3, lora_alpha_slider_3,
                 lora_dropdown_4, lora_alpha_slider_4,
+                clear_cache_checkbox,  # new output inserted here
                 negative_prompt, save_prompt_checkbox, multiline_checkbox,
                 num_generations, use_random_seed_checkbox, seed_input,
                 quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
@@ -1682,7 +1570,6 @@ if __name__ == "__main__":
                 enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox
             ]
         )
-
         save_config_button.click(
             fn=save_config,
             inputs=[
@@ -1693,15 +1580,14 @@ if __name__ == "__main__":
                 lora_dropdown_2, lora_alpha_slider_2,
                 lora_dropdown_3, lora_alpha_slider_3,
                 lora_dropdown_4, lora_alpha_slider_4,
-                negative_prompt, save_prompt_checkbox, multiline_checkbox,
-                num_generations, use_random_seed_checkbox, seed_input,
+                clear_cache_checkbox,  # new input inserted here
+                negative_prompt, save_prompt_checkbox, multiline_checkbox, num_generations, use_random_seed_checkbox, seed_input,
                 quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
                 batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
                 enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox
             ],
             outputs=[config_status, config_dropdown]
         )
-
         image_input.change(
             fn=update_target_dimensions,
             inputs=[image_input, auto_scale_checkbox, width_slider, height_slider],
@@ -1712,5 +1598,4 @@ if __name__ == "__main__":
             inputs=[image_input, auto_scale_checkbox, width_slider, height_slider],
             outputs=[width_slider, height_slider]
         )
-
         demo.launch(share=args.share, inbrowser=True)
