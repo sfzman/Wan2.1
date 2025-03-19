@@ -18,7 +18,6 @@ import wan
 from wan.configs import MAX_AREA_CONFIGS, WAN_CONFIGS
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_video
-
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
@@ -783,7 +782,7 @@ def generate_videos(
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                return "", log_text, str(last_used_seed or "")
+                return None, log_text, str(last_used_seed or "")
             iteration += 1
             gen_start = time.time()
             log_text += f"[CMD] Generating video {iteration} of {total_iterations} with prompt: {final_prompt}\n"
@@ -822,13 +821,58 @@ def generate_videos(
                 if input_video is not None:
                     input_video_path = input_video if isinstance(input_video, str) else input_video.name
                     print(f"[CMD] Processing video-to-video with input video: {input_video_path}")
+                    # The VideoData class is used to package the input video.
                     video_obj = VideoData(input_video_path, height=target_height, width=target_width)
-                    video_data = loaded_pipeline(input_video=video_obj, denoising_strength=denoising_strength, **common_args)
+                    video_data = loaded_pipeline(
+                        input_video=video_obj,
+                        denoising_strength=denoising_strength,
+                        **common_args,
+                        cancel_fn=lambda: cancel_flag
+                    )
+                    if cancel_flag:
+                        log_text += "[CMD] Generation cancelled by user mid-run.\n"
+                        duration = time.time() - overall_start_time
+                        log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
+                        log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
+                        loaded_pipeline = None
+                        loaded_pipeline_config = {}
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        return None, log_text, str(last_used_seed or "")
                 else:
-                    video_data = loaded_pipeline(**common_args)
+                    video_data = loaded_pipeline(
+                        **common_args,
+                        cancel_fn=lambda: cancel_flag
+                    )
+                    if cancel_flag:
+                        log_text += "[CMD] Generation cancelled by user mid-run.\n"
+                        duration = time.time() - overall_start_time
+                        log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
+                        log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
+                        loaded_pipeline = None
+                        loaded_pipeline_config = {}
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        return None, log_text, str(last_used_seed or "")
                 video_filename = get_next_filename(".mp4")
             elif model_choice == "14B_text":
-                video_data = loaded_pipeline(**common_args)
+                video_data = loaded_pipeline(
+                    **common_args,
+                    cancel_fn=lambda: cancel_flag
+                )
+                if cancel_flag:
+                    log_text += "[CMD] Generation cancelled by user mid-run.\n"
+                    duration = time.time() - overall_start_time
+                    log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
+                    log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
+                    loaded_pipeline = None
+                    loaded_pipeline_config = {}
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    return None, log_text, str(last_used_seed or "")
                 video_filename = get_next_filename(".mp4")
             elif model_choice in ["14B_image_720p", "14B_image_480p"]:
                 if input_image is None:
@@ -853,7 +897,22 @@ def generate_videos(
                 preprocessed_image_filename = os.path.join(preprocessed_folder, f"{base_name}.png")
                 processed_image.save(preprocessed_image_filename)
                 log_text += f"[CMD] Saved auto processed image: {preprocessed_image_filename}\n"
-                video_data = loaded_pipeline(input_image=processed_image, **common_args)
+                video_data = loaded_pipeline(
+                    input_image=processed_image,
+                    **common_args,
+                    cancel_fn=lambda: cancel_flag
+                )
+                if cancel_flag:
+                    log_text += "[CMD] Generation cancelled by user mid-run.\n"
+                    duration = time.time() - overall_start_time
+                    log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
+                    log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
+                    loaded_pipeline = None
+                    loaded_pipeline_config = {}
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    return None, log_text, str(last_used_seed or "")
             else:
                 err_msg = "[CMD] Invalid combination of inputs."
                 loaded_pipeline = None
@@ -930,7 +989,6 @@ def cancel_generation():
 # ------------------------------
 # Updated batch_process_videos function with missing parameters fixed:
 # Added parameters: tiled, cfg_scale, sigma_shift.
-# ------------------------------
 def batch_process_videos(
     default_prompt, folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
@@ -983,6 +1041,13 @@ def batch_process_videos(
         "lora_model_4": lora_model_4,
         "lora_alpha_4": lora_alpha_4
     }
+    
+    # Check for early cancellation
+    if cancel_batch_flag:
+        log_text += "[CMD] Batch processing cancelled before model loading.\n"
+        cancel_batch_flag = False
+        return log_text
+    
     if loaded_pipeline is None or loaded_pipeline_config != current_config:
         if effective_loras:
             for path, alpha in effective_loras:
@@ -1019,10 +1084,18 @@ def batch_process_videos(
     seed_counter = 0  # Counter for manual seed incrementation
     
     for image_file in images:
+        
         if cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user.\n"
-            break
-
+            # Clean up resources when cancelled
+            loaded_pipeline = None
+            loaded_pipeline_config = {}
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            cancel_batch_flag = False
+            return log_text
+        
         iter_start = time.time()
         base, ext = os.path.splitext(image_file)
         prompt_path = os.path.join(folder_path, base + ".txt")
@@ -1070,6 +1143,18 @@ def batch_process_videos(
 
         log_text += f"[CMD] Processing {image_file} with prompt and seed {current_seed}\n"
         
+        # Check for cancellation before opening image
+        if cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user.\n"
+            # Clean up resources when cancelled
+            loaded_pipeline = None
+            loaded_pipeline_config = {}
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            cancel_batch_flag = False
+            return log_text
+            
         try:
             image_path = os.path.join(folder_path, image_file)
             # Modified: Apply EXIF orientation correction using ImageOps.exif_transpose
@@ -1086,8 +1171,37 @@ def batch_process_videos(
             processed_image = auto_scale_image(image_obj, target_width, target_height)
         else:
             processed_image = image_obj
-            
-        video_data = loaded_pipeline(input_image=processed_image, **common_args)
+        
+        # Check for cancellation before running pipeline
+        if cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user before pipeline.\n"
+            # Clean up resources when cancelled
+            loaded_pipeline = None
+            loaded_pipeline_config = {}
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            cancel_batch_flag = False
+            return log_text
+        
+        video_data = loaded_pipeline(
+            input_image=processed_image,
+            **common_args,
+            cancel_fn=lambda: cancel_batch_flag
+        )
+        
+        # Check for cancellation after pipeline
+        if not video_data or cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user mid-run.\n"
+            # Clean up resources when cancelled
+            loaded_pipeline = None
+            loaded_pipeline_config = {}
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            cancel_batch_flag = False
+            return log_text
+
         save_video(video_data, output_filename, fps=fps, quality=quality)
         log_text += f"[CMD] Saved batch generated video: {output_filename}\n"
 
@@ -1143,6 +1257,8 @@ def batch_process_videos(
                 log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
 
         # End of each image file processing
+    # Reset the cancel flag after batch processing
+    cancel_batch_flag = False
     loaded_pipeline = None
     loaded_pipeline_config = {}
     gc.collect()
@@ -1329,7 +1445,7 @@ if __name__ == "__main__":
     prompt_expander = None
 
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V42 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V43 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 # Model & Resolution settings
