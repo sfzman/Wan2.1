@@ -1041,16 +1041,23 @@ def generate_videos(
                 with open(text_filename, "w", encoding="utf-8") as f:
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
+            # Apply Practical-RIFE enhancement for the generated segment if enabled and FPS <= 29.
             if pr_rife_enabled and video_filename:
-                print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {video_filename}")
-                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                improved_video = os.path.join("outputs", "improved_" + os.path.basename(video_filename))
-                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-                cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{video_filename}" --output="{improved_video}"'
-                subprocess.run(cmd, shell=True, check=True, env=os.environ)
-                log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
-                video_filename = improved_video
-                final_output_video = improved_video
+                cap = cv2.VideoCapture(video_filename)
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                cap.release()
+                if source_fps <= 29:
+                    print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {video_filename}")
+                    multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                    improved_video = os.path.join("outputs", "improved_" + os.path.basename(video_filename))
+                    model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                    cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{video_filename}" --output="{improved_video}"'
+                    subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                    log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                    video_filename = improved_video
+                    final_output_video = improved_video
+                else:
+                    log_text += f"[CMD] Skipping Practical-RIFE because source video FPS ({source_fps:.2f}) is above 29.\n"
             last_video_path = video_filename
             generated_segments.append(last_video_path)
             
@@ -1148,14 +1155,21 @@ def generate_videos(
                 last_video_path = segments[-1]
                 final_output_video = segments[-1]
         
+        # Apply RIFE on the extended merged video if enabled and FPS <= 29.
         if pr_rife_enabled and final_output_video:
-            multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-            improved_video = os.path.join("outputs", "improved_" + os.path.basename(final_output_video))
-            model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-            cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{final_output_video}" --output="{improved_video}"'
-            subprocess.run(cmd, shell=True, check=True, env=os.environ)
-            log_text += f"[CMD] Applied Practical-RIFE to extended video with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
-            final_output_video = improved_video
+            cap = cv2.VideoCapture(final_output_video)
+            source_fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            if source_fps <= 29:
+                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                improved_video = os.path.join("outputs", "improved_" + os.path.basename(final_output_video))
+                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{final_output_video}" --output="{improved_video}"'
+                subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                log_text += f"[CMD] Applied Practical-RIFE to extended video with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                final_output_video = improved_video
+            else:
+                log_text += f"[CMD] Skipping Practical-RIFE on extended video because source video FPS ({source_fps:.2f}) is above 29.\n"
             
     overall_duration = time.time() - overall_start_time
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
@@ -1397,18 +1411,25 @@ def batch_process_videos(
             with open(text_filename, "w", encoding="utf-8") as f:
                 f.write(generation_details)
             log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
+            # Apply Practical-RIFE for batch processed video if enabled and FPS <= 29.
             if pr_rife_enabled:
-                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
-                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-                cmd = (
-                    f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
-                    f'--model="{model_dir}" --multi={multiplier_val} '
-                    f'--video="{output_filename}" --output="{improved_video}"'
-                )
-                subprocess.run(cmd, shell=True, check=True, env=os.environ)
-                log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
-                output_filename = improved_video
+                cap = cv2.VideoCapture(output_filename)
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                cap.release()
+                if source_fps <= 29:
+                    multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                    improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
+                    model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                    cmd = (
+                        f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
+                        f'--model="{model_dir}" --multi={multiplier_val} '
+                        f'--video="{output_filename}" --output="{improved_video}"'
+                    )
+                    subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                    log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                    output_filename = improved_video
+                else:
+                    log_text += f"[CMD] Skipping Practical-RIFE for batch generated video because its FPS ({source_fps:.2f}) is above 29.\n"
         if extend_factor > 1:
             if is_input_video:
                 original_file_path = copy_to_outputs(original_file_path)
@@ -1487,6 +1508,28 @@ def batch_process_videos(
                 log_text += f"[CMD] Merged extended video saved as: {merged_video}\n"
                 output_filename = merged_video
             if pr_rife_enabled:
+                cap = cv2.VideoCapture(output_filename)
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                cap.release()
+                if source_fps <= 29:
+                    multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                    improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
+                    model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                    cmd = (
+                        f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
+                        f'--model="{model_dir}" --multi={multiplier_val} '
+                        f'--video="{output_filename}" --output="{improved_video}"'
+                    )
+                    subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                    log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                    output_filename = improved_video
+                else:
+                    log_text += f"[CMD] Skipping Practical-RIFE for batch generated video extension because its FPS ({source_fps:.2f}) is above 29.\n"
+        if pr_rife_enabled:
+            cap = cv2.VideoCapture(output_filename)
+            source_fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            if source_fps <= 29:
                 multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
                 improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
                 model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
@@ -1497,17 +1540,9 @@ def batch_process_videos(
                 )
                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
                 log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
-        if pr_rife_enabled:
-            multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-            improved_video = os.path.join(batch_output_folder, "improved_" + os.path.basename(output_filename))
-            model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-            cmd = (
-                f'"{sys.executable}" "Practical-RIFE/inference_video.py" '
-                f'--model="{model_dir}" --multi={multiplier_val} '
-                f'--video="{output_filename}" --output="{improved_video}"'
-            )
-            subprocess.run(cmd, shell=True, check=True, env=os.environ)
-            log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                output_filename = improved_video
+            else:
+                log_text += f"[CMD] Skipping Practical-RIFE for batch generated video because its FPS ({source_fps:.2f}) is above 29.\n"
         generation_duration = time.time() - iter_start
         if save_prompt:
             text_filename = os.path.splitext(output_filename)[0] + ".txt"
@@ -1537,7 +1572,6 @@ def batch_process_videos(
             with open(text_filename, "w", encoding="utf-8") as f:
                 f.write(generation_details)
             log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
-        # End of extend logic
     return log_text
 
 def cancel_batch_process():
@@ -1746,7 +1780,6 @@ if __name__ == "__main__":
                         value=config_loaded.get("aspect_ratio", "16:9")
                     )
                 with gr.Row():
-                    # Moved Extension Feature Info button to same row as the Extend Video Factor slider.
                     extend_slider = gr.Slider(minimum=1, maximum=10, step=1, value=config_loaded.get("extend_factor", 1), label="Extend Video Factor (1× = No Extension)")
                     extension_info_button = gr.Button("Extension Feature Info")
                 with gr.Row():
