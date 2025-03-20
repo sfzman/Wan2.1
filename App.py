@@ -1726,7 +1726,9 @@ def get_lora_choices():
     return choices
 
 def refresh_lora_list():
-    return gr.update(choices=get_lora_choices(), value="None")
+    update_val = gr.update(choices=get_lora_choices(), value="None")
+    # Return the same update for all four LoRA dropdowns.
+    return update_val, update_val, update_val, update_val
 
 def apply_fast_preset():
     return 20, True, 0.15, 10
@@ -1746,7 +1748,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V46 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V47 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
@@ -2035,4 +2037,5 @@ if __name__ == "__main__":
             outputs=[width_slider, height_slider]
         )
         extension_info_button.click(fn=show_extension_info, inputs=[], outputs=[extension_info_output])
+        refresh_lora_button.click(fn=refresh_lora_list, outputs=[lora_dropdown, lora_dropdown_2, lora_dropdown_3, lora_dropdown_4])
         demo.launch(share=args.share, inbrowser=True)
