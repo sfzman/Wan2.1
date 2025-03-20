@@ -616,7 +616,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 "16GB": "0",
                 "24GB": "3,000,000,000",
                 "32GB": "5,750,000,000",
-                "48GB": "16,000,000,000",
+                "48GB": "14,500,000,000",
                 "80GB": "22,000,000,000"
             }
             resolution_choices = list(ASPECT_RATIOS_14b.keys())
