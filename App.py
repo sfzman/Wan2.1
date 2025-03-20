@@ -1789,24 +1789,28 @@ if __name__ == "__main__":
                     width_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("width", 832), label="Width")
                     height_slider = gr.Slider(minimum=320, maximum=1536, step=16, value=config_loaded.get("height", 480), label="Height")
                 with gr.Row():
-                    clear_cache_checkbox = gr.Checkbox(label="Clear model from RAM and VRAM after generation", value=config_loaded.get("clear_cache_after_gen", DEFAULT_CLEAR_CACHE))
-                    
                     with gr.Column():
-                        auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=config_loaded.get("auto_crop", True))
-                        auto_scale_checkbox = gr.Checkbox(label="Auto Scale", value=config_loaded.get("auto_scale", False))
-                    
-                    tiled_checkbox = gr.Checkbox(label="Tiled VAE Decode (Disable for 1.3B model for 12GB or more GPUs)", value=config_loaded.get("tiled", True))
-                    inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=config_loaded.get("inference_steps", 50), label="Inference Steps")
+                        with gr.Row():
+                            auto_crop_checkbox = gr.Checkbox(label="Auto Crop", value=config_loaded.get("auto_crop", True))
+                            auto_scale_checkbox = gr.Checkbox(label="Auto Scale", value=config_loaded.get("auto_scale", False))
+                    with gr.Column():
+                        tiled_checkbox = gr.Checkbox(label="Tiled VAE Decode (Disable for 1.3B model for 12GB or more GPUs)", value=config_loaded.get("tiled", True))
+                    with gr.Column():
+                        inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=config_loaded.get("inference_steps", 50), label="Inference Steps")
                 with gr.Row():
                     quality_slider = gr.Slider(minimum=1, maximum=10, step=1, value=config_loaded.get("quality", 5), label="Quality")
                     fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=config_loaded.get("fps", 16), label="FPS (for saving video - you can save as 8 FPS and 4x RIFE to get 2x duration)")
                     num_frames_slider = gr.Slider(minimum=1, maximum=300, step=1, value=config_loaded.get("num_frames", 81), label="Number of Frames (Always 4x+1 e.g. 17 frames = 1 second). More frames uses more VRAM and slower")
                 gr.Markdown("### Increase Video FPS with Practical-RIFE")
                 with gr.Row():
-                    pr_rife_checkbox = gr.Checkbox(label="Apply Practical-RIFE", value=config_loaded.get("pr_rife", True))
-                    pr_rife_radio = gr.Radio(choices=["2x FPS", "4x FPS"], label="FPS Multiplier", value=config_loaded.get("pr_rife_multiplier", "2x FPS"))
-                    cfg_scale_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("cfg_scale", 6.0), label="CFG Scale")
-                    sigma_shift_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("sigma_shift", 6.0), label="Sigma Shift")
+                    with gr.Column():
+                        with gr.Row():
+                            pr_rife_checkbox = gr.Checkbox(label="Apply Practical-RIFE", value=config_loaded.get("pr_rife", True))
+                            pr_rife_radio = gr.Radio(choices=["2x FPS", "4x FPS"], label="FPS Multiplier", value=config_loaded.get("pr_rife_multiplier", "2x FPS"))
+                    with gr.Column():
+                        with gr.Row():
+                            cfg_scale_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("cfg_scale", 6.0), label="CFG Scale")
+                            sigma_shift_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("sigma_shift", 6.0), label="Sigma Shift")
                 gr.Markdown("### GPU Settings - If you get out of VRAM error or if it uses shared VRAM, reduce this number, FP8 may generate color broken at the moment in I2V")
                 with gr.Row():
                     num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value=config_loaded.get("num_persistent", "12000000000"))
@@ -1845,10 +1849,15 @@ if __name__ == "__main__":
                     tar_lang = gr.Radio(choices=["CH", "EN"], container=False, label="Target language for prompt enhance", value=config_loaded.get("tar_lang", "EN"))
                 negative_prompt = gr.Textbox(label="Negative Prompt", value=config_loaded.get("negative_prompt", "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down"), placeholder="Enter negative prompt", lines=2)
                 with gr.Row():
-                    save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=config_loaded.get("save_prompt", True))
-                    multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=config_loaded.get("multiline", False))                    
-                    use_random_seed_checkbox = gr.Checkbox(label="Use Random Seed", value=config_loaded.get("use_random_seed", True))
-                    seed_input = gr.Textbox(label="Seed (if not using random)", placeholder="Enter seed", value=config_loaded.get("seed", ""))
+                    with gr.Column():
+                        with gr.Row():
+                            save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=config_loaded.get("save_prompt", True))
+                            multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=config_loaded.get("multiline", False))               
+                            
+                    with gr.Column():
+                        with gr.Row():  
+                            use_random_seed_checkbox = gr.Checkbox(label="Use Random Seed", value=config_loaded.get("use_random_seed", True))
+                            seed_input = gr.Textbox(label="Seed (if not using random)", placeholder="Enter seed", value=config_loaded.get("seed", ""))
                 gr.Markdown("### Use Left Panel to Upload Image to Video, Right Panel to Upload Video to Video (1.3b Model) or Extent Existing Video (480p and 720p I2V models)")
                 with gr.Row():
                     denoising_slider = gr.Slider(minimum=0.0, maximum=1.0, step=0.05, value=config_loaded.get("denoising_strength", 0.7),
@@ -1856,6 +1865,8 @@ if __name__ == "__main__":
                 with gr.Row():
                     image_input = gr.Image(type="pil", label="Input Image (for image-to-video)", height=512)
                     video_input = gr.Video(label="Input Video (for Video-to-Video, only for 1.3B) or Extending Existing Video (Uses Last Frame, for Image-to-Video models)", format="mp4", height=512)
+                with gr.Row():
+                    clear_cache_checkbox = gr.Checkbox(label="Clear model from RAM and VRAM after generation - not working very well yet", value=config_loaded.get("clear_cache_after_gen", DEFAULT_CLEAR_CACHE))
 
             with gr.Column(scale=3):
                 video_output = gr.Video(label="Generated Video", height=720)
