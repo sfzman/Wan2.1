@@ -165,16 +165,37 @@ def get_common_file(new_path, old_path):
 # ------------------------- Pipeline Management Helpers -------------------------
 
 def has_model_config_changed(old_config, new_config):
-    keys_to_compare = [
-        "model_choice", "torch_dtype", "num_persistent",
+    # First check for critical parameters that must match
+    critical_keys = ["model_choice", "torch_dtype", "num_persistent"]
+    for key in critical_keys:
+        if old_config.get(key) != new_config.get(key):
+            print(f"[CMD - DEBUG] Critical config change detected in {key}: {old_config.get(key)} != {new_config.get(key)}")
+            return True
+    
+    # Check LoRA parameters, but treat "None" string and None as equivalent
+    lora_keys = [
         "lora_model", "lora_alpha",
         "lora_model_2", "lora_alpha_2",
         "lora_model_3", "lora_alpha_3",
         "lora_model_4", "lora_alpha_4"
     ]
-    for key in keys_to_compare:
-        if old_config.get(key) != new_config.get(key):
+    
+    for key in lora_keys:
+        old_val = old_config.get(key)
+        new_val = new_config.get(key)
+        
+        # Treat "None" string, None value, and missing key as equivalent
+        old_is_none = old_val is None or old_val == "None" or old_val == ""
+        new_is_none = new_val is None or new_val == "None" or new_val == ""
+        
+        if old_is_none and new_is_none:
+            # Both are effectively None, so they're equivalent
+            continue
+            
+        if old_val != new_val:
+            print(f"[CMD - DEBUG] LoRA config change detected in {key}: {old_val} != {new_val}")
             return True
+            
     return False
 
 def clear_pipeline_if_needed(pipeline, pipeline_config, new_config):
@@ -201,8 +222,14 @@ def clear_pipeline_if_needed(pipeline, pipeline_config, new_config):
             print(f"[CMD - DEBUG] model_manager is None OR hasattr(model_manager, 'clear_models') is False. Skipping model_manager.clear_models()")
         try:
             del model_manager
+            model_manager = None
         except Exception as e:
             print(f"[CMD] Error deleting model_manager: {e}")
+
+        # Ensure model_manager is recreated
+        if model_manager is None:
+            print(f"[CMD - DEBUG] Reinitializing model_manager")
+            model_manager = ModelManager(device="cpu")
 
         gc.collect()
         gc.collect()
@@ -1236,7 +1263,19 @@ def generate_videos(
         additional_extensions = int(extend_factor) - (2 if input_was_video else 1)
         
         # Setup pipeline for extension if needed
-        ext_config = {"model_choice": ext_model_code, "torch_dtype": torch_dtype, "num_persistent": vram_value}
+        ext_config = {
+            "model_choice": ext_model_code, 
+            "torch_dtype": torch_dtype, 
+            "num_persistent": vram_value,
+            "lora_model": lora_model,
+            "lora_alpha": lora_alpha,
+            "lora_model_2": lora_model_2,
+            "lora_alpha_2": lora_alpha_2,
+            "lora_model_3": lora_model_3,
+            "lora_alpha_3": lora_alpha_3,
+            "lora_model_4": lora_model_4,
+            "lora_alpha_4": lora_alpha_4
+        }
         loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, ext_config)
         if loaded_pipeline is None:
             loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
@@ -1262,7 +1301,7 @@ def generate_videos(
             # Use the dimensions from the last frame
             new_width, new_height = last_frame.size
             common_args_ext = {
-                "prompt": prompt,
+                "prompt": final_prompt,
                 "negative_prompt": negative_prompt,
                 "num_inference_steps": int(inference_steps),
                 "seed": random.randint(0, 2**32 - 1) if use_random_seed else int(seed_input.strip() or 0) + ext_iter,
@@ -1282,19 +1321,29 @@ def generate_videos(
                 
             log_text += f"[CMD] Generating extension segment {ext_iter} using model {ext_model_radio}\n"
             video_filename_ext = get_next_filename(".mp4")
-            video_data_ext = loaded_pipeline(
-                input_image=last_frame,
-                **common_args_ext,
-                cancel_fn=lambda: cancel_flag
-            )
-            
-            if cancel_flag:
-                log_text += "[CMD] Extension generation cancelled by user mid-run.\n"
-                break
+            try:
+                video_data_ext = loaded_pipeline(
+                    input_image=last_frame,
+                    **common_args_ext,
+                    cancel_fn=lambda: cancel_batch_flag
+                )
+                if not video_data_ext or cancel_batch_flag:
+                    log_text += "[CMD] Extension generation cancelled by user mid-run.\n"
+                    break
+                save_video(video_data_ext, video_filename_ext, fps=fps, quality=quality)
+                log_text += f"[CMD] Saved extension segment {ext_iter}: {video_filename_ext}\n"
                 
-            # Save the generated video segment
-            save_video(video_data_ext, video_filename_ext, fps=fps, quality=quality)
-            log_text += f"[CMD] Saved extension segment {ext_iter} video: {video_filename_ext}\n"
+                # Force memory cleanup after each extension segment
+                if clear_cache_after_gen:
+                    log_text += "[CMD] Running garbage collection after extension segment.\n"
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+            except Exception as e:
+                log_text += f"[CMD] Error during extension generation: {str(e)}\n"
+                print(f"[CMD] Extension error details: {e}")
+                # Continue with the rest of the batch despite the error
+                continue
             
             # Save prompt information for individual extension segments if enabled
             if save_prompt:
@@ -1763,7 +1812,7 @@ def batch_process_videos(
                 log_text += f"[CMD] Saved used last frame: {last_frame_filename}\n"
                 new_width, new_height = last_frame.size
                 common_args_ext = {
-                    "prompt": prompt,
+                    "prompt": final_prompt,
                     "negative_prompt": negative_prompt,
                     "num_inference_steps": int(inference_steps),
                     "seed": random.randint(0, 2**32 - 1) if use_random_seed else int(seed_input.strip() or 0) + ext_iter,
@@ -1780,23 +1829,48 @@ def batch_process_videos(
                 else:
                     common_args_ext["tea_cache_l1_thresh"] = None
                     common_args_ext["tea_cache_model_id"] = ""
-                ext_config = {"model_choice": ext_model_code, "torch_dtype": torch_dtype, "num_persistent": vram_value}
+                ext_config = {
+                    "model_choice": ext_model_code, 
+                    "torch_dtype": torch_dtype, 
+                    "num_persistent": vram_value,
+                    "lora_model": lora_model,
+                    "lora_alpha": lora_alpha,
+                    "lora_model_2": lora_model_2,
+                    "lora_alpha_2": lora_alpha_2,
+                    "lora_model_3": lora_model_3,
+                    "lora_alpha_3": lora_alpha_3,
+                    "lora_model_4": lora_model_4,
+                    "lora_alpha_4": lora_alpha_4
+                }
                 loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, ext_config)
                 if loaded_pipeline is None:
                     loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
                     loaded_pipeline_config = ext_config
                 log_text += f"[CMD] Processing extension for {file} extension iteration {ext_iter}\n"
                 output_filename_ext = os.path.join(batch_output_folder, get_next_filename(".mp4"))
-                video_data_ext = loaded_pipeline(
-                    input_image=last_frame,
-                    **common_args_ext,
-                    cancel_fn=lambda: cancel_batch_flag
-                )
-                if not video_data_ext or cancel_batch_flag:
-                    log_text += "[CMD] Extension generation cancelled by user mid-run.\n"
-                    break
-                save_video(video_data_ext, output_filename_ext, fps=fps, quality=quality)
-                log_text += f"[CMD] Saved extension segment {ext_iter}: {output_filename_ext}\n"
+                try:
+                    video_data_ext = loaded_pipeline(
+                        input_image=last_frame,
+                        **common_args_ext,
+                        cancel_fn=lambda: cancel_batch_flag
+                    )
+                    if not video_data_ext or cancel_batch_flag:
+                        log_text += "[CMD] Extension generation cancelled by user mid-run.\n"
+                        break
+                    save_video(video_data_ext, output_filename_ext, fps=fps, quality=quality)
+                    log_text += f"[CMD] Saved extension segment {ext_iter}: {output_filename_ext}\n"
+                    
+                    # Force memory cleanup after each extension segment
+                    if clear_cache_after_gen:
+                        log_text += "[CMD] Running garbage collection after extension segment.\n"
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                except Exception as e:
+                    log_text += f"[CMD] Error during extension generation: {str(e)}\n"
+                    print(f"[CMD] Extension error details: {e}")
+                    # Continue with the rest of the batch despite the error
+                    continue
                 
                 # Save prompt information for the extension segment if enabled
                 if save_prompt:
@@ -2106,11 +2180,23 @@ def load_wan_pipeline(model_choice, torch_dtype_str, num_persistent, lora_path=N
     if lora_path is not None:
         if isinstance(lora_path, list):
             for path, alpha in lora_path:
-                print(f"[CMD] Loading LoRA from {path} with alpha {alpha}")
-                model_manager.load_lora(path, lora_alpha=alpha)
+                try:
+                    print(f"[CMD] Loading LoRA from {path} with alpha {alpha}")
+                    if os.path.exists(path):
+                        model_manager.load_lora(path, lora_alpha=alpha)
+                    else:
+                        print(f"[CMD] Warning: LoRA file not found: {path}")
+                except Exception as e:
+                    print(f"[CMD] Error loading LoRA {path}: {e}")
         else:
-            print(f"[CMD] Loading LoRA from {lora_path} with alpha {lora_alpha}")
-            model_manager.load_lora(lora_path, lora_alpha=lora_alpha)
+            try:
+                print(f"[CMD] Loading LoRA from {lora_path} with alpha {lora_alpha}")
+                if os.path.exists(lora_path):
+                    model_manager.load_lora(lora_path, lora_alpha=lora_alpha)
+                else:
+                    print(f"[CMD] Warning: LoRA file not found: {lora_path}")
+            except Exception as e:
+                print(f"[CMD] Error loading LoRA {lora_path}: {e}")
     pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device=device)
     try:
         num_persistent_val = int(num_persistent)
