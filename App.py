@@ -1042,7 +1042,7 @@ def generate_videos(
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt and parameters: {text_filename}\n"
             # Apply Practical-RIFE enhancement for the generated segment if enabled and FPS <= 29.
-            if pr_rife_enabled and video_filename:
+            if pr_rife_enabled and video_filename and extend_factor <= 1:
                 cap = cv2.VideoCapture(video_filename)
                 source_fps = cap.get(cv2.CAP_PROP_FPS)
                 cap.release()
@@ -1076,29 +1076,79 @@ def generate_videos(
         else:
             ext_model_code = model_choice
 
+        # Track all original and RIFE-enhanced videos separately
+        original_segments = []
+        enhanced_segments = []
+        
+        # Add first video to segments list
+        original_segments.append(last_video_path)
+        
+        # Apply RIFE to the first video if enabled
+        if pr_rife_enabled:
+            cap = cv2.VideoCapture(last_video_path)
+            source_fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            if source_fps <= 29:
+                print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {last_video_path}")
+                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                improved_video = os.path.join("outputs", "improved_" + os.path.basename(last_video_path))
+                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{last_video_path}" --output="{improved_video}"'
+                subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                enhanced_segments.append(improved_video)
+            else:
+                log_text += f"[CMD] Skipping Practical-RIFE because source video FPS ({source_fps:.2f}) is above 29.\n"
+                enhanced_segments.append(last_video_path)  # Use original if RIFE can't be applied
+        
         if input_was_video and copied_input_video is not None:
-            segments = [copied_input_video]
-            segments.append(last_video_path)
+            # Add the input video as the first segment if it exists
+            original_segments.insert(0, copied_input_video)
+            
+            # Apply RIFE to input video if enabled
+            if pr_rife_enabled:
+                cap = cv2.VideoCapture(copied_input_video)
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                cap.release()
+                if source_fps <= 29:
+                    print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {copied_input_video}")
+                    multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                    improved_input = os.path.join("outputs", "improved_" + os.path.basename(copied_input_video))
+                    model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                    cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{copied_input_video}" --output="{improved_input}"'
+                    subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                    log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved input video saved to {improved_input}\n"
+                    enhanced_segments.insert(0, improved_input)
+                else:
+                    log_text += f"[CMD] Skipping Practical-RIFE because source video FPS ({source_fps:.2f}) is above 29.\n"
+                    enhanced_segments.insert(0, copied_input_video)  # Use original if RIFE can't be applied
+            else:
+                enhanced_segments.insert(0, copied_input_video)  # Add without RIFE
+            
             log_text += f"[CMD] Starting extension with input video: {copied_input_video}\n"
             cur_last_video = last_video_path
         else:
-            segments = [last_video_path]
             cur_last_video = last_video_path
             
+        # Calculate how many additional segments to generate
         additional_extensions = int(extend_factor) - (2 if input_was_video else 1)
         
+        # Setup pipeline for extension if needed
         ext_config = {"model_choice": ext_model_code, "torch_dtype": torch_dtype, "num_persistent": vram_value}
         loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, ext_config)
         if loaded_pipeline is None:
             loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=[], lora_alpha=None)
             loaded_pipeline_config = ext_config
             
+        # Generate additional video segments
         for ext_iter in range(1, additional_extensions + 1):
+            # Always extract the last frame from the original video (not the RIFE enhanced version)
             last_frame = extract_last_frame(cur_last_video)
             if last_frame is None:
                 log_text += f"[CMD] Failed to extract last frame from {cur_last_video} for extension {ext_iter}.\n"
                 break
                 
+            # Save the extracted frame for reference
             used_folder = "used_last_frames"
             if not os.path.exists(used_folder):
                 os.makedirs(used_folder)
@@ -1107,6 +1157,7 @@ def generate_videos(
             last_frame.save(last_frame_filename)
             log_text += f"[CMD] Saved used last frame: {last_frame_filename}\n"
             
+            # Use the dimensions from the last frame
             new_width, new_height = last_frame.size
             common_args_ext = {
                 "prompt": prompt,
@@ -1139,38 +1190,103 @@ def generate_videos(
                 log_text += "[CMD] Extension generation cancelled by user mid-run.\n"
                 break
                 
+            # Save the generated video segment
             save_video(video_data_ext, video_filename_ext, fps=fps, quality=quality)
             log_text += f"[CMD] Saved extension segment {ext_iter} video: {video_filename_ext}\n"
-            segments.append(video_filename_ext)
+            
+            # Add to original segments list
+            original_segments.append(video_filename_ext)
             cur_last_video = video_filename_ext
             
-        if len(segments) > 1:
-            try:
-                merged_video = merge_videos(segments)
-                log_text += f"[CMD] Merged extended video saved as: {merged_video}\n"
-                last_video_path = merged_video
-                final_output_video = merged_video
-            except Exception as e:
-                log_text += f"[CMD] Error merging videos: {str(e)}\n"
-                last_video_path = segments[-1]
-                final_output_video = segments[-1]
-        
-        # Apply RIFE on the extended merged video if enabled and FPS <= 29.
-        if pr_rife_enabled and final_output_video:
-            cap = cv2.VideoCapture(final_output_video)
-            source_fps = cap.get(cv2.CAP_PROP_FPS)
-            cap.release()
-            if source_fps <= 29:
-                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                improved_video = os.path.join("outputs", "improved_" + os.path.basename(final_output_video))
-                model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
-                cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{final_output_video}" --output="{improved_video}"'
-                subprocess.run(cmd, shell=True, check=True, env=os.environ)
-                log_text += f"[CMD] Applied Practical-RIFE to extended video with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
-                final_output_video = improved_video
+            # Apply RIFE to this segment if enabled
+            if pr_rife_enabled:
+                cap = cv2.VideoCapture(video_filename_ext)
+                source_fps = cap.get(cv2.CAP_PROP_FPS)
+                cap.release()
+                if source_fps <= 29:
+                    print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {video_filename_ext}")
+                    multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                    improved_video = os.path.join("outputs", "improved_" + os.path.basename(video_filename_ext))
+                    model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
+                    cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{video_filename_ext}" --output="{improved_video}"'
+                    subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                    log_text += f"[CMD] Applied Practical-RIFE with multiplier {multiplier_val}x. Improved video saved to {improved_video}\n"
+                    enhanced_segments.append(improved_video)
+                else:
+                    log_text += f"[CMD] Skipping Practical-RIFE because source video FPS ({source_fps:.2f}) is above 29.\n"
+                    enhanced_segments.append(video_filename_ext)  # Use original if RIFE can't be applied
             else:
-                log_text += f"[CMD] Skipping Practical-RIFE on extended video because source video FPS ({source_fps:.2f}) is above 29.\n"
+                enhanced_segments.append(video_filename_ext)  # Add without RIFE if not enabled
             
+        # Merge all the original videos (without RIFE)
+        if len(original_segments) > 1:
+            try:
+                merged_original = get_next_filename("_extended_original.mp4")
+                filelist_path = os.path.join(tempfile.gettempdir(), "filelist_original.txt")
+                with open(filelist_path, "w", encoding="utf-8") as f:
+                    for vf in original_segments:
+                        if os.path.exists(vf):
+                            f.write(f"file '{os.path.abspath(vf)}'\n")
+                        else:
+                            log_text += f"[CMD] Warning: Original video file not found: {vf}\n"
+                
+                if os.path.getsize(filelist_path) > 0:
+                    cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_original}"'
+                    subprocess.run(cmd, shell=True, check=True)
+                    os.remove(filelist_path)
+                    log_text += f"[CMD] Merged original extended videos saved as: {merged_original}\n"
+                    
+                    # Set the merged original as the final output if RIFE isn't enabled
+                    if not pr_rife_enabled:
+                        final_output_video = merged_original
+                        last_video_path = merged_original
+                else:
+                    log_text += f"[CMD] No valid original videos to merge.\n"
+                    if len(original_segments) > 0 and os.path.exists(original_segments[-1]):
+                        final_output_video = original_segments[-1]
+                        last_video_path = original_segments[-1]
+            except Exception as e:
+                log_text += f"[CMD] Error merging original videos: {str(e)}\n"
+                if len(original_segments) > 0:
+                    for seg in reversed(original_segments):
+                        if os.path.exists(seg):
+                            final_output_video = seg
+                            last_video_path = seg
+                            break
+        
+        # Merge all the RIFE-enhanced videos if RIFE is enabled
+        if pr_rife_enabled and len(enhanced_segments) > 1:
+            try:
+                merged_enhanced = get_next_filename("_extended_enhanced.mp4")
+                filelist_path = os.path.join(tempfile.gettempdir(), "filelist_enhanced.txt")
+                with open(filelist_path, "w", encoding="utf-8") as f:
+                    for vf in enhanced_segments:
+                        if os.path.exists(vf):
+                            f.write(f"file '{os.path.abspath(vf)}'\n")
+                        else:
+                            log_text += f"[CMD] Warning: Enhanced video file not found: {vf}\n"
+                
+                if os.path.getsize(filelist_path) > 0:
+                    cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_enhanced}"'
+                    subprocess.run(cmd, shell=True, check=True)
+                    os.remove(filelist_path)
+                    log_text += f"[CMD] Merged enhanced extended videos saved as: {merged_enhanced}\n"
+                    final_output_video = merged_enhanced
+                    last_video_path = merged_enhanced
+                else:
+                    log_text += f"[CMD] No valid enhanced videos to merge.\n"
+                    if len(enhanced_segments) > 0 and os.path.exists(enhanced_segments[-1]):
+                        final_output_video = enhanced_segments[-1]
+                        last_video_path = enhanced_segments[-1]
+            except Exception as e:
+                log_text += f"[CMD] Error merging enhanced videos: {str(e)}\n"
+                if len(enhanced_segments) > 0:
+                    for seg in reversed(enhanced_segments):
+                        if os.path.exists(seg):
+                            final_output_video = seg
+                            last_video_path = seg
+                            break
+        
     overall_duration = time.time() - overall_start_time
     log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
     log_text += f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds ({overall_duration/60:.2f} minutes). Last used seed: {last_used_seed}\n"
@@ -1584,16 +1700,37 @@ def get_next_filename(extension):
     outputs_dir = "outputs"
     if not os.path.exists(outputs_dir):
         os.makedirs(outputs_dir)
-    existing_files = [f for f in os.listdir(outputs_dir) if f.endswith(extension)]
-    current_numbers = []
-    for file in existing_files:
-        try:
-            num = int(os.path.splitext(file)[0])
-            current_numbers.append(num)
-        except:
-            continue
-    next_number = max(current_numbers, default=0) + 1
-    return os.path.join(outputs_dir, f"{next_number:05d}{extension}")
+    
+    # Handle special extensions with underscore prefixes
+    if extension.startswith("_"):
+        base_name = extension[1:].split(".")[0]  # Get the name part without the dot and extension
+        file_ext = "." + extension.split(".")[-1]  # Get the actual extension (.mp4, etc)
+        
+        existing_files = [f for f in os.listdir(outputs_dir) if base_name in f and f.endswith(file_ext)]
+        current_numbers = []
+        for file in existing_files:
+            try:
+                # Extract the number part before the special extension
+                match = re.search(r'(\d+)_' + re.escape(base_name), file)
+                if match:
+                    num = int(match.group(1))
+                    current_numbers.append(num)
+            except:
+                continue
+        next_number = max(current_numbers, default=0) + 1
+        return os.path.join(outputs_dir, f"{next_number:05d}_{base_name}{file_ext}")
+    else:
+        # Original behavior for regular extensions
+        existing_files = [f for f in os.listdir(outputs_dir) if f.endswith(extension)]
+        current_numbers = []
+        for file in existing_files:
+            try:
+                num = int(os.path.splitext(file)[0])
+                current_numbers.append(num)
+            except:
+                continue
+        next_number = max(current_numbers, default=0) + 1
+        return os.path.join(outputs_dir, f"{next_number:05d}{extension}")
 
 def open_outputs_folder():
     outputs_dir = os.path.abspath("outputs")
@@ -1748,7 +1885,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V47 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V48 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
