@@ -2200,7 +2200,7 @@ if __name__ == "__main__":
                     with gr.Column():
                         inference_steps_slider = gr.Slider(minimum=1, maximum=100, step=1, value=config_loaded.get("inference_steps", 50), label="Inference Steps")
                 with gr.Row():
-                    quality_slider = gr.Slider(minimum=1, maximum=9, step=1, value=config_loaded.get("quality", 5), label="Quality")
+                    quality_slider = gr.Slider(minimum=1, maximum=10, step=1, value=config_loaded.get("quality", 5), label="Quality")
                     fps_slider = gr.Slider(minimum=8, maximum=30, step=1, value=config_loaded.get("fps", 16), label="FPS (for saving video - you can save as 8 FPS and 4x RIFE to get 2x duration)")
                     num_frames_slider = gr.Slider(minimum=1, maximum=300, step=1, value=config_loaded.get("num_frames", 81), label="Number of Frames (Always 4x+1 e.g. 17 frames = 1 second). More frames uses more VRAM and slower")
                 gr.Markdown("### Increase Video FPS with Practical-RIFE")
