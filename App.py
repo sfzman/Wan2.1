@@ -1239,7 +1239,7 @@ def generate_videos(
         ext_config = {"model_choice": ext_model_code, "torch_dtype": torch_dtype, "num_persistent": vram_value}
         loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, ext_config)
         if loaded_pipeline is None:
-            loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=[], lora_alpha=None)
+            loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
             loaded_pipeline_config = ext_config
             
         # Generate additional video segments
@@ -1783,7 +1783,7 @@ def batch_process_videos(
                 ext_config = {"model_choice": ext_model_code, "torch_dtype": torch_dtype, "num_persistent": vram_value}
                 loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, ext_config)
                 if loaded_pipeline is None:
-                    loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=[], lora_alpha=None)
+                    loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
                     loaded_pipeline_config = ext_config
                 log_text += f"[CMD] Processing extension for {file} extension iteration {ext_iter}\n"
                 output_filename_ext = os.path.join(batch_output_folder, get_next_filename(".mp4"))
@@ -2294,7 +2294,7 @@ if __name__ == "__main__":
                     skip_overwrite_checkbox = gr.Checkbox(label="Skip Overwrite if Output Exists", value=config_loaded.get("skip_overwrite", True))
                     save_prompt_batch_checkbox = gr.Checkbox(label="Save prompt to file (Batch)", value=config_loaded.get("save_prompt_batch", True))
                 with gr.Row():
-                    batch_process_button = gr.Button("Batch Process")
+                    batch_process_button = gr.Button("Batch Process", variant="primary")
                     cancel_batch_process_button = gr.Button("Cancel Batch Process")
                 batch_status_output = gr.Textbox(label="Batch Process Status Log", lines=10)
                 status_output = gr.Textbox(label="Status Log", lines=20)
