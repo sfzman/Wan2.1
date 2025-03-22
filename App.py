@@ -975,7 +975,13 @@ def generate_videos(
             else:
                 try:
                     base_seed = int(seed_input.strip()) if seed_input.strip() != "" else 0
-                    current_seed = base_seed + iteration - 1
+                    if multi_line:
+                        # For multi-line prompts, only increment seed based on generation number (i), not prompt line
+                        # This ensures all lines with the same generation number use the same seed
+                        current_seed = base_seed + i
+                    else:
+                        # Standard behavior for single-line prompts: increment by iteration
+                        current_seed = base_seed + iteration - 1
                 except:
                     current_seed = 0
             last_used_seed = current_seed
@@ -2148,7 +2154,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V49 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V50 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
