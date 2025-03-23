@@ -1012,13 +1012,14 @@ def get_next_generation_number(output_folder):
                 num = int(m.group(1))
                 if num > max_num:
                     max_num = num
-    return max_num + 1
+    return max_num
 
 def generate_videos(
     prompt, tar_lang, negative_prompt, input_image, input_video, denoising_strength, num_generations,
     save_prompt, multi_line, use_random_seed, seed_input, quality, fps,
     model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
-    aspect_ratio, width, height, auto_crop, auto_scale, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift,
+    aspect_ratio, width, height, auto_crop, auto_scale, tiled,
+    inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift,
     enable_teacache, tea_cache_l1_thresh, tea_cache_model_id,
     lora_model, lora_alpha,
     lora_model_2, lora_alpha_2,
@@ -1167,42 +1168,39 @@ def generate_videos(
         prompts_list = [prompt.strip()]
         
     total_iterations = len(prompts_list) * int(num_generations)
-    iteration = 0
-    # Lists to collect all generated segments across generations (if needed for batch logging)
-    # Now, determine the next available generation number (4-digit) to avoid overwriting existing files.
-    gen_counter = get_next_generation_number(output_folder)
-
+    # Naming logic: if a custom base filename is provided, use it (and append counter for multiple generations)
+    if custom_output_filename:
+        base_name_prefix = custom_output_filename
+        counter = 0
+    else:
+        counter = get_next_generation_number(output_folder)
+    
     # For seed handling:
-    try:
-        base_seed = int(seed_input.strip()) if seed_input.strip() != "" else 0
-    except:
-        base_seed = 0
+    if use_random_seed:
+        base_seed = None
+    else:
+        try:
+            base_seed = int(seed_input.strip()) if seed_input.strip() != "" else random.randint(0, 2**32 - 1)
+        except:
+            base_seed = random.randint(0, 2**32 - 1)
 
-    # Process each prompt line and for each, each generation iteration
     for p in prompts_list:
         for gen in range(int(num_generations)):
-            if cancel_flag:
-                log_text += "[CMD] Generation cancelled by user.\n"
-                duration = time.time() - overall_start_time
-                log_text += f"\n[CMD] Used VRAM Setting: {vram_value}\n"
-                log_text += f"[CMD] Generation complete. Duration: {duration:.2f} seconds. Last used seed: {last_used_seed}\n"
-                if clear_cache_after_gen:
-                    loaded_pipeline = None
-                    loaded_pipeline_config = {}
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                return final_output_video, log_text, str(last_used_seed or "")
-            iteration += 1
-            gen_seed = (base_seed + gen) if int(num_generations) > 1 else base_seed
-            current_seed = gen_seed  # All multi-line prompts in this generation use same seed.
+            if use_random_seed:
+                current_seed = random.randint(0, 2**32 - 1)
+            else:
+                current_seed = base_seed + gen if int(num_generations) > 1 else base_seed
             last_used_seed = current_seed
 
-            # New base filename for this generation (e.g. "0001")
-            base_name = f"{gen_counter:04d}"
-            gen_counter += 1
+            # New base filename for this generation
+            if custom_output_filename:
+                base_name = f"{base_name_prefix}{'' if counter == 0 else '_' + str(counter)}"
+                counter += 1
+            else:
+                base_name = f"{counter:04d}"
+                counter += 1
 
-            log_text += f"[CMD] Generation {iteration} of {total_iterations} with prompt: {p} and seed: {current_seed}\n"
+            log_text += f"[CMD] Generation with prompt: {p} and seed: {current_seed}\n"
 
             # Generate the original video using the pipeline
             common_args = {
@@ -1224,7 +1222,6 @@ def generate_videos(
                 common_args["tea_cache_l1_thresh"] = None
                 common_args["tea_cache_model_id"] = ""
             
-            # Determine the output filename for original
             original_filename = os.path.join(output_folder, f"{base_name}.mp4")
             # Generate based on model type
             if model_choice == "1.3B":
@@ -1269,7 +1266,6 @@ def generate_videos(
                 return None, err_msg, str(last_used_seed or "")
             save_video(video_data, original_filename, fps=fps, quality=quality)
             log_text += f"[CMD] Saved original video: {original_filename}\n"
-            # Save prompt info for original (if enabled)
             if save_prompt:
                 txt_filename = os.path.splitext(original_filename)[0] + ".txt"
                 generation_details = generate_prompt_info({
@@ -1306,13 +1302,11 @@ def generate_videos(
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt info for original video: {txt_filename}\n"
             
-            # Initialize variables for RIFE improved outputs and extension merging.
             original_improved = None
             ext_segments = []
             ext_segments_improved = []
             
-            # If extend_factor > 1, generate extension segments.
-            additional_extensions = int(extend_factor) - 1  # regardless of input type, use this for naming consistency.
+            additional_extensions = int(extend_factor) - 1
             prev_video = original_filename
             for ext_iter in range(1, additional_extensions + 1):
                 if cancel_flag:
@@ -1328,7 +1322,6 @@ def generate_videos(
                 last_frame_filename = os.path.join(used_folder, f"{base_name}_ext{ext_iter}_lastframe.png")
                 last_frame.save(last_frame_filename)
                 log_text += f"[CMD] Saved last frame used for extension {ext_iter}: {last_frame_filename}\n"
-                # Set new resolution based on last frame
                 new_width, new_height = last_frame.size
                 common_args_ext = {
                     "prompt": process_random_prompt(p),
@@ -1362,7 +1355,6 @@ def generate_videos(
                         break
                     save_video(video_data_ext, extension_filename, fps=fps, quality=quality)
                     log_text += f"[CMD] Saved extension segment {ext_iter}: {extension_filename}\n"
-                    # Save prompt info for extension (not for improved versions)
                     if save_prompt:
                         txt_filename_ext = os.path.splitext(extension_filename)[0] + ".txt"
                         generation_details_ext = generate_prompt_info({
@@ -1404,9 +1396,7 @@ def generate_videos(
                     log_text += f"[CMD] Error during extension generation: {str(e)}\n"
                     continue
             
-            # If Practical-RIFE is enabled, run RIFE on the original and each extension.
             if pr_rife_enabled:
-                # Improve original video
                 original_improved = os.path.join(output_folder, f"{base_name}_improved.mp4")
                 try:
                     cap = cv2.VideoCapture(original_filename)
@@ -1425,7 +1415,6 @@ def generate_videos(
                     log_text += f"[CMD] Error applying Practical-RIFE on original: {str(e)}\n"
                     original_improved = original_filename
                 
-                # Improve each extension segment
                 for idx, ext_file in enumerate(ext_segments):
                     ext_improved = os.path.join(output_folder, f"{base_name}_ext{idx+1}_improved.mp4")
                     try:
@@ -1448,7 +1437,6 @@ def generate_videos(
             else:
                 original_improved = original_filename
 
-            # Merge segments if any extension was generated.
             merged_original = None
             merged_enhanced = None
             if ext_segments:
@@ -1471,11 +1459,9 @@ def generate_videos(
                         log_text += f"[CMD] No valid files to merge for extended original.\n"
                 except Exception as e:
                     log_text += f"[CMD] Error merging original extensions: {str(e)}\n"
-                # Merge enhanced if RIFE was applied and if we have improved segments
                 if pr_rife_enabled and ext_segments_improved:
                     try:
                         merge_list_improved = [original_improved] + ext_segments_improved
-                        # In naming, if more than 1 extension then use _extended_original_enhanced; else _extended_enhanced
                         suffix = "_extended_original_enhanced" if len(ext_segments_improved) > 1 else "_extended_enhanced"
                         merged_enhanced = os.path.join(output_folder, f"{base_name}{suffix}.mp4")
                         filelist_path = os.path.join(tempfile.gettempdir(), "filelist_enhanced.txt")
@@ -1495,7 +1481,6 @@ def generate_videos(
                     except Exception as e:
                         log_text += f"[CMD] Error merging enhanced extensions: {str(e)}\n"
 
-            # Determine final output video based on available merges
             if pr_rife_enabled and merged_enhanced and os.path.exists(merged_enhanced):
                 final_output_video = merged_enhanced
             elif merged_original and os.path.exists(merged_original):
@@ -1507,7 +1492,6 @@ def generate_videos(
 
             log_text += f"[CMD] Completed generation for base {base_name}.\n"
             
-            # Run garbage collection if needed.
             if clear_cache_after_gen:
                 loaded_pipeline = None
                 loaded_pipeline_config = {}
@@ -1541,7 +1525,7 @@ def cancel_generation():
     return "Cancelling generation..."
 
 # ------------------------- Improved Batch Processing -------------------------
-# This function now re-uses the single processing pipeline (generate_videos) for each file in the specified folder.
+# Batch processing now processes every file one by one by using the file's base name as custom_output_filename
 def batch_process_videos(
     default_prompt, folder_path, batch_output_folder, skip_overwrite, tar_lang, negative_prompt, denoising_strength,
     use_random_seed, seed_input, quality, fps, model_choice_radio, vram_preset, num_persistent_input,
@@ -1581,19 +1565,37 @@ def batch_process_videos(
         else:
             log_text += f"[CMD] No prompt file for {file}, using default prompt.\n"
             prompt_content = default_prompt
-        print(f"DEBUG {file_path}")
+        # Decide how to load the file as image or video based on its extension
+        ext_lower = ext.lower()
+        if ext_lower == ".mp4":
+            image_in = None
+            video_in = file_path
+        else:
+            try:
+                loaded_img = Image.open(file_path)
+                loaded_img = ImageOps.exif_transpose(loaded_img)
+                image_in = loaded_img.convert("RGB")
+            except Exception as e:
+                log_text += f"[CMD] Error loading image {file_path}: {e}\n"
+                continue
+            video_in = None
         
-        # Use custom_output_filename to enforce our naming if needed.
-        custom_filename = None  # We let our new naming take control.
+        # Use the file's base name (without extension) as the custom output filename
+        custom_filename = base
+
+        print(f"DEBUG processing {file_path}")
+        
         generated_video, single_log, _ = generate_videos(
-            prompt_content, tar_lang, negative_prompt, None, file_path, denoising_strength, num_generations,
+            prompt_content, tar_lang, negative_prompt, image_in, video_in, denoising_strength, num_generations,
             save_prompt, False, use_random_seed, seed_input, quality, fps,
             model_choice_radio, vram_preset, num_persistent_input, torch_dtype, num_frames,
             aspect_ratio, width, height, auto_crop, auto_scale, tiled, inference_steps, pr_rife_enabled, pr_rife_radio, cfg_scale, sigma_shift,
             enable_teacache, tea_cache_l1_thresh, tea_cache_model_id,
             lora_model, lora_alpha, lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4,
             clear_cache_after_gen, extend_factor,
-            override_input_file=file_path, output_dir_override=batch_output_folder, custom_output_filename=custom_filename
+            None,  # override_input_file removed in batch processing
+            output_dir_override=batch_output_folder,
+            custom_output_filename=custom_filename
         )
         log_text += single_log
     return log_text
@@ -1906,7 +1908,6 @@ if __name__ == "__main__":
                         with gr.Row():
                             save_prompt_checkbox = gr.Checkbox(label="Save prompt to file", value=config_loaded.get("save_prompt", True))
                             multiline_checkbox = gr.Checkbox(label="Multi-line prompt (each line is separate)", value=config_loaded.get("multiline", False))               
-                            
                     with gr.Column():
                         with gr.Row():  
                             use_random_seed_checkbox = gr.Checkbox(label="Use Random Seed", value=config_loaded.get("use_random_seed", True))
