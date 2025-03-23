@@ -1050,7 +1050,7 @@ def generate_videos(
             except Exception as e:
                 print(f"[CMD] Error loading file {override_input_file}: {e}")
 
-    cancel_flag = False
+    cancel_flag = False  # Reset cancel flag at the start of generation
     log_text = ""
     last_used_seed = None
     overall_start_time = time.time()
@@ -1186,6 +1186,11 @@ def generate_videos(
 
     for p in prompts_list:
         for gen in range(int(num_generations)):
+            # Check if generation has been cancelled before starting a new one
+            if cancel_flag:
+                log_text += "[CMD] Generation cancelled by user before starting a new video.\n"
+                return None, log_text, str(last_used_seed or "")
+                
             if use_random_seed:
                 current_seed = random.randint(0, 2**32 - 1)
             else:
@@ -1396,50 +1401,77 @@ def generate_videos(
                     log_text += f"[CMD] Error during extension generation: {str(e)}\n"
                     continue
             
-            if pr_rife_enabled:
-                original_improved = os.path.join(output_folder, f"{base_name}_improved.mp4")
-                try:
-                    cap = cv2.VideoCapture(original_filename)
-                    source_fps = cap.get(cv2.CAP_PROP_FPS)
-                    cap.release()
-                    if source_fps <= 29:
-                        print(f"[CMD] Applying Practical-RIFE on original {original_filename}")
-                        multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                        cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{original_filename}" --output="{original_improved}"'
-                        subprocess.run(cmd, shell=True, check=True, env=os.environ)
-                        log_text += f"[CMD] Applied Practical-RIFE on original. Saved as: {original_improved}\n"
-                    else:
-                        original_improved = original_filename
-                        log_text += f"[CMD] Skipped Practical-RIFE on original because source FPS ({source_fps:.2f}) is above threshold.\n"
-                except Exception as e:
-                    log_text += f"[CMD] Error applying Practical-RIFE on original: {str(e)}\n"
-                    original_improved = original_filename
+            # Skip further processing if cancelled
+            if cancel_flag:
+                log_text += "[CMD] Generation cancelled by user, skipping post-processing steps.\n"
+                if clear_cache_after_gen:
+                    loaded_pipeline = None
+                    loaded_pipeline_config = {}
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                return original_filename, log_text, str(last_used_seed or "")
                 
-                for idx, ext_file in enumerate(ext_segments):
-                    ext_improved = os.path.join(output_folder, f"{base_name}_ext{idx+1}_improved.mp4")
+            if pr_rife_enabled:
+                if cancel_flag:
+                    log_text += "[CMD] Generation cancelled by user before Practical-RIFE processing.\n"
+                else:
+                    original_improved = os.path.join(output_folder, f"{base_name}_improved.mp4")
                     try:
-                        cap = cv2.VideoCapture(ext_file)
+                        cap = cv2.VideoCapture(original_filename)
                         source_fps = cap.get(cv2.CAP_PROP_FPS)
                         cap.release()
                         if source_fps <= 29:
-                            print(f"[CMD] Applying Practical-RIFE on extension {ext_file}")
+                            print(f"[CMD] Applying Practical-RIFE on original {original_filename}")
                             multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                            cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{ext_file}" --output="{ext_improved}"'
-                            subprocess.run(cmd, shell=True, check=True, env=os.environ)
-                            log_text += f"[CMD] Applied Practical-RIFE on extension {idx+1}. Saved as: {ext_improved}\n"
+                            cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{original_filename}" --output="{original_improved}"'
+                            if not cancel_flag:  # Check again before running the subprocess
+                                subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                                log_text += f"[CMD] Applied Practical-RIFE on original. Saved as: {original_improved}\n"
+                            else:
+                                log_text += "[CMD] Generation cancelled by user during Practical-RIFE processing.\n"
+                                original_improved = original_filename
                         else:
-                            ext_improved = ext_file
-                            log_text += f"[CMD] Skipped Practical-RIFE on extension {idx+1} due to high FPS.\n"
+                            original_improved = original_filename
+                            log_text += f"[CMD] Skipped Practical-RIFE on original because source FPS ({source_fps:.2f}) is above threshold.\n"
                     except Exception as e:
-                        log_text += f"[CMD] Error applying Practical-RIFE on extension {idx+1}: {str(e)}\n"
-                        ext_improved = ext_file
-                    ext_segments_improved.append(ext_improved)
+                        log_text += f"[CMD] Error applying Practical-RIFE on original: {str(e)}\n"
+                        original_improved = original_filename
+                    
+                    for idx, ext_file in enumerate(ext_segments):
+                        if cancel_flag:
+                            log_text += f"[CMD] Generation cancelled by user before Practical-RIFE processing on extension {idx+1}.\n"
+                            ext_segments_improved.append(ext_file)
+                            continue
+                            
+                        ext_improved = os.path.join(output_folder, f"{base_name}_ext{idx+1}_improved.mp4")
+                        try:
+                            cap = cv2.VideoCapture(ext_file)
+                            source_fps = cap.get(cv2.CAP_PROP_FPS)
+                            cap.release()
+                            if source_fps <= 29:
+                                print(f"[CMD] Applying Practical-RIFE on extension {ext_file}")
+                                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                                cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{ext_file}" --output="{ext_improved}"'
+                                if not cancel_flag:  # Check again before running the subprocess
+                                    subprocess.run(cmd, shell=True, check=True, env=os.environ)
+                                    log_text += f"[CMD] Applied Practical-RIFE on extension {idx+1}. Saved as: {ext_improved}\n"
+                                else:
+                                    log_text += f"[CMD] Generation cancelled by user during Practical-RIFE processing on extension {idx+1}.\n"
+                                    ext_improved = ext_file
+                            else:
+                                ext_improved = ext_file
+                                log_text += f"[CMD] Skipped Practical-RIFE on extension {idx+1} due to high FPS.\n"
+                        except Exception as e:
+                            log_text += f"[CMD] Error applying Practical-RIFE on extension {idx+1}: {str(e)}\n"
+                            ext_improved = ext_file
+                        ext_segments_improved.append(ext_improved)
             else:
                 original_improved = original_filename
 
             merged_original = None
             merged_enhanced = None
-            if ext_segments:
+            if ext_segments and not cancel_flag:
                 try:
                     merge_list = [original_filename] + ext_segments
                     merged_original = os.path.join(output_folder, f"{base_name}_extended_original.mp4")
@@ -1450,16 +1482,20 @@ def generate_videos(
                                 f.write(f"file '{os.path.abspath(vf)}'\n")
                             else:
                                 log_text += f"[CMD] Warning: file not found: {vf}\n"
-                    if os.path.getsize(filelist_path) > 0:
+                    if os.path.getsize(filelist_path) > 0 and not cancel_flag:
                         cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_original}"'
                         subprocess.run(cmd, shell=True, check=True)
                         os.remove(filelist_path)
                         log_text += f"[CMD] Merged unenhanced extended video saved as: {merged_original}\n"
                     else:
-                        log_text += f"[CMD] No valid files to merge for extended original.\n"
+                        if cancel_flag:
+                            log_text += "[CMD] Generation cancelled by user before merging original files.\n"
+                        else:
+                            log_text += f"[CMD] No valid files to merge for extended original.\n"
+                        os.remove(filelist_path)
                 except Exception as e:
                     log_text += f"[CMD] Error merging original extensions: {str(e)}\n"
-                if pr_rife_enabled and ext_segments_improved:
+                if pr_rife_enabled and ext_segments_improved and not cancel_flag:
                     try:
                         merge_list_improved = [original_improved] + ext_segments_improved
                         suffix = "_extended_original_enhanced" if len(ext_segments_improved) > 1 else "_extended_enhanced"
@@ -1471,13 +1507,17 @@ def generate_videos(
                                     f.write(f"file '{os.path.abspath(vf)}'\n")
                                 else:
                                     log_text += f"[CMD] Warning: file not found: {vf}\n"
-                        if os.path.getsize(filelist_path) > 0:
+                        if os.path.getsize(filelist_path) > 0 and not cancel_flag:
                             cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_enhanced}"'
                             subprocess.run(cmd, shell=True, check=True)
                             os.remove(filelist_path)
                             log_text += f"[CMD] Merged enhanced extended video saved as: {merged_enhanced}\n"
                         else:
-                            log_text += f"[CMD] No valid files to merge for extended enhanced video.\n"
+                            if cancel_flag:
+                                log_text += "[CMD] Generation cancelled by user before merging enhanced files.\n"
+                            else:
+                                log_text += f"[CMD] No valid files to merge for extended enhanced video.\n"
+                            os.remove(filelist_path)
                     except Exception as e:
                         log_text += f"[CMD] Error merging enhanced extensions: {str(e)}\n"
 
@@ -1519,8 +1559,9 @@ def generate_videos(
         return None, log_text + "\n[CMD] Warning: Could not generate valid output video.", str(last_used_seed or "")
 
 def cancel_generation():
-    global cancel_flag
+    global cancel_flag, cancel_batch_flag
     cancel_flag = True
+    cancel_batch_flag = True  # Also cancel batch processing
     print("[CMD] Cancel button pressed.")
     return "Cancelling generation..."
 
@@ -1534,6 +1575,9 @@ def batch_process_videos(
     lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4, enable_teacache,
     tea_cache_l1_thresh, tea_cache_model_id, clear_cache_after_gen, extend_factor, num_generations
 ):
+    global cancel_batch_flag, cancel_flag
+    cancel_batch_flag = False
+    cancel_flag = False  # Reset cancel_flag when starting a new batch
     log_text = ""
     if not os.path.isdir(folder_path):
         log_text += f"[CMD] Provided folder path does not exist: {folder_path}\n"
@@ -1551,6 +1595,11 @@ def batch_process_videos(
     total_files = len(files)
     log_text += f"[CMD] Found {total_files} files in folder {folder_path}\n"
     for file in files:
+        # Check if batch process has been cancelled
+        if cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user.\n"
+            return log_text
+            
         file_path = os.path.join(folder_path, file)
         base, ext = os.path.splitext(file)
         prompt_path = os.path.join(folder_path, base + ".txt")
@@ -1565,6 +1614,12 @@ def batch_process_videos(
         else:
             log_text += f"[CMD] No prompt file for {file}, using default prompt.\n"
             prompt_content = default_prompt
+            
+        # Check again before loading the file
+        if cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user.\n"
+            return log_text
+            
         # Decide how to load the file as image or video based on its extension
         ext_lower = ext.lower()
         if ext_lower == ".mp4":
@@ -1580,6 +1635,11 @@ def batch_process_videos(
                 continue
             video_in = None
         
+        # Check again before starting generation
+        if cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user.\n"
+            return log_text
+            
         # Use the file's base name (without extension) as the custom output filename
         custom_filename = base
 
@@ -1598,13 +1658,20 @@ def batch_process_videos(
             custom_output_filename=custom_filename
         )
         log_text += single_log
+        
+        # Check again after individual generation completes
+        if cancel_batch_flag:
+            log_text += "[CMD] Batch processing cancelled by user after file completion.\n"
+            return log_text
+            
     return log_text
 
 def cancel_batch_process():
-    global cancel_batch_flag
+    global cancel_batch_flag, cancel_flag
     cancel_batch_flag = True
+    cancel_flag = True  # Also cancel the current individual generation
     print("[CMD] Batch process cancel button pressed.")
-    return "Cancelling batch process..."
+    return "Cancelling batch process...", "Cancelling any active generation..."
 
 def get_next_filename(extension, output_dir="outputs"):
     if not os.path.exists(output_dir):
@@ -2039,7 +2106,7 @@ if __name__ == "__main__":
             ],
             outputs=batch_status_output
         )
-        cancel_batch_process_button.click(fn=cancel_batch_process, outputs=batch_status_output)
+        cancel_batch_process_button.click(fn=cancel_batch_process, outputs=[batch_status_output, status_output])
         load_config_button.click(
             fn=load_config,
             inputs=[config_dropdown],
