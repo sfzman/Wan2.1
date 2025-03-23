@@ -1012,7 +1012,7 @@ def get_next_generation_number(output_folder):
                 num = int(m.group(1))
                 if num > max_num:
                     max_num = num
-    return max_num
+    return max_num + 1
 
 def generate_videos(
     prompt, tar_lang, negative_prompt, input_image, input_video, denoising_strength, num_generations,
@@ -1868,7 +1868,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V51 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V52 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
