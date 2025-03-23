@@ -132,12 +132,12 @@ def generate_prompt_info(parameters):
     
     return details
 
-def merge_videos(video_files):
+def merge_videos(video_files, output_dir="outputs"):
     filelist_path = os.path.join(tempfile.gettempdir(), "filelist.txt")
     with open(filelist_path, "w", encoding="utf-8") as f:
         for vf in video_files:
             f.write(f"file '{os.path.abspath(vf)}'\n")
-    merged_video = get_next_filename(".mp4")
+    merged_video = get_next_filename(".mp4", output_dir=output_dir)
     cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_video}"'
     subprocess.run(cmd, shell=True, check=True)
     os.remove(filelist_path)
@@ -861,6 +861,13 @@ def generate_videos(
     clear_cache_after_gen, extend_factor
 ):
     global loaded_pipeline, loaded_pipeline_config, cancel_flag, prompt_expander
+    
+    # Initialize output folder - use "outputs" as default but allow for customization
+    output_folder = "outputs"
+    # Create the output folder if it doesn't exist
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+        
     cancel_flag = False
     log_text = ""
     last_used_seed = None
@@ -1178,7 +1185,7 @@ def generate_videos(
                 if source_fps <= 29:
                     print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {video_filename}")
                     multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                    improved_video = os.path.join("outputs", "improved_" + os.path.basename(video_filename))
+                    improved_video = os.path.join(output_folder, "improved_" + os.path.basename(video_filename))
                     model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
                     cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{video_filename}" --output="{improved_video}"'
                     subprocess.run(cmd, shell=True, check=True, env=os.environ)
@@ -1220,7 +1227,7 @@ def generate_videos(
             if source_fps <= 29:
                 print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {last_video_path}")
                 multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                improved_video = os.path.join("outputs", "improved_" + os.path.basename(last_video_path))
+                improved_video = os.path.join(output_folder, "improved_" + os.path.basename(last_video_path))
                 model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
                 cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{last_video_path}" --output="{improved_video}"'
                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
@@ -1242,7 +1249,7 @@ def generate_videos(
                 if source_fps <= 29:
                     print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {copied_input_video}")
                     multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                    improved_input = os.path.join("outputs", "improved_" + os.path.basename(copied_input_video))
+                    improved_input = os.path.join(output_folder, "improved_" + os.path.basename(copied_input_video))
                     model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
                     cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{copied_input_video}" --output="{improved_input}"'
                     subprocess.run(cmd, shell=True, check=True, env=os.environ)
@@ -1395,7 +1402,7 @@ def generate_videos(
                 if source_fps <= 29:
                     print(f"[CMD] Applying Practical-RIFE with multiplier {pr_rife_radio} on video {video_filename_ext}")
                     multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
-                    improved_video = os.path.join("outputs", "improved_" + os.path.basename(video_filename_ext))
+                    improved_video = os.path.join(output_folder, "improved_" + os.path.basename(video_filename_ext))
                     model_dir = os.path.abspath(os.path.join("Practical-RIFE", "train_log"))
                     cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{model_dir}" --multi={multiplier_val} --video="{video_filename_ext}" --output="{improved_video}"'
                     subprocess.run(cmd, shell=True, check=True, env=os.environ)
@@ -1554,6 +1561,21 @@ def batch_process_videos(
     clear_cache_after_gen, extend_factor
 ):
     global loaded_pipeline, loaded_pipeline_config, cancel_batch_flag
+    
+    # Ensure the batch_output_folder exists
+    if not os.path.exists(batch_output_folder):
+        try:
+            os.makedirs(batch_output_folder)
+            print(f"[CMD] Created output folder: {batch_output_folder}")
+        except Exception as e:
+            print(f"[CMD] Error creating output folder {batch_output_folder}: {e}")
+            return "Error: Failed to create output folder. Please check the path and permissions.", ""
+    
+    # Check if the folder is writable
+    if not os.access(batch_output_folder, os.W_OK):
+        print(f"[CMD] Output folder is not writable: {batch_output_folder}")
+        return "Error: Output folder is not writable. Please check permissions.", ""
+    
     cancel_batch_flag = False
     log_text = ""
     if model_choice_radio not in ["WAN 2.1 14B Image-to-Video 720P", "WAN 2.1 14B Image-to-Video 480P"]:
@@ -1847,7 +1869,7 @@ def batch_process_videos(
                     loaded_pipeline = load_wan_pipeline(ext_model_code, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
                     loaded_pipeline_config = ext_config
                 log_text += f"[CMD] Processing extension for {file} extension iteration {ext_iter}\n"
-                output_filename_ext = os.path.join(batch_output_folder, get_next_filename(".mp4"))
+                output_filename_ext = get_next_filename(".mp4", output_dir=batch_output_folder)
                 try:
                     video_data_ext = loaded_pipeline(
                         input_image=last_frame,
@@ -1907,7 +1929,7 @@ def batch_process_videos(
                 segments.append(output_filename_ext)
                 cur_last_video = output_filename_ext
             if len(segments) > 1:
-                merged_video = merge_videos(segments)
+                merged_video = merge_videos(segments, output_dir=batch_output_folder)
                 log_text += f"[CMD] Merged extended video saved as: {merged_video}\n"
                 output_filename = merged_video
                 
@@ -2039,41 +2061,40 @@ def cancel_batch_process():
     print("[CMD] Batch process cancel button pressed.")
     return "Cancelling batch process..."
 
-def get_next_filename(extension):
-    outputs_dir = "outputs"
-    if not os.path.exists(outputs_dir):
-        os.makedirs(outputs_dir)
+def get_next_filename(extension, output_dir="outputs"):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     
     # Handle special extensions with underscore prefixes
     if extension.startswith("_"):
         base_name = extension[1:].split(".")[0]  # Get the name part without the dot and extension
         file_ext = "." + extension.split(".")[-1]  # Get the actual extension (.mp4, etc)
         
-        existing_files = [f for f in os.listdir(outputs_dir) if base_name in f and f.endswith(file_ext)]
+        existing_files = [f for f in os.listdir(output_dir) if base_name in f and f.endswith(file_ext)]
         current_numbers = []
         for file in existing_files:
             try:
                 # Extract the number part before the special extension
                 match = re.search(r'(\d+)_' + re.escape(base_name), file)
                 if match:
-                    num = int(match.group(1))
-                    current_numbers.append(num)
+                    current_numbers.append(int(match.group(1)))
             except:
-                continue
-        next_number = max(current_numbers, default=0) + 1
-        return os.path.join(outputs_dir, f"{next_number:05d}_{base_name}{file_ext}")
+                pass
+        
+        if not current_numbers:
+            next_number = 1
+        else:
+            next_number = max(current_numbers) + 1
+        
+        return os.path.join(output_dir, f"{next_number}_{base_name}{file_ext}")
     else:
-        # Original behavior for regular extensions
-        existing_files = [f for f in os.listdir(outputs_dir) if f.endswith(extension)]
-        current_numbers = []
-        for file in existing_files:
-            try:
-                num = int(os.path.splitext(file)[0])
-                current_numbers.append(num)
-            except:
-                continue
-        next_number = max(current_numbers, default=0) + 1
-        return os.path.join(outputs_dir, f"{next_number:05d}{extension}")
+        # For regular extensions
+        counter = 1
+        while True:
+            filename = os.path.join(output_dir, f"{counter}{extension}")
+            if not os.path.exists(filename):
+                return filename
+            counter += 1
 
 def open_outputs_folder():
     outputs_dir = os.path.abspath("outputs")
