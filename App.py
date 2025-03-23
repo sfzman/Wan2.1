@@ -25,6 +25,14 @@ from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 
+# Global variables
+loaded_pipeline = None
+loaded_pipeline_config = {}
+cancel_flag = False
+cancel_batch_flag = False
+prompt_expander = None
+last_selected_aspect_ratio = None
+
 # ------------------------- Utility Functions -------------------------
 
 def extract_last_frame(video_path):
@@ -405,9 +413,10 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
     return f"Config '{config_name}' saved.", gr.update(choices=get_config_list(), value=config_name)
 
 def load_config(selected_config):
-    config_path = os.path.join(CONFIG_DIR, f"{selected_config}.json")
+    global last_selected_aspect_ratio
+    
     default_vals = get_default_config()
-    if not os.path.exists(config_path):
+    if not os.path.exists(os.path.join(CONFIG_DIR, f"{selected_config}.json")):
         return (
             f"Config '{selected_config}' not found.",
             default_vals["model_choice"],
@@ -454,10 +463,14 @@ def load_config(selected_config):
             default_vals["tea_cache_model_id"],
             default_vals["extend_factor"]
         )
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(os.path.join(CONFIG_DIR, f"{selected_config}.json"), "r", encoding="utf-8") as f:
         config_data = json.load(f)
     with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
         f.write(selected_config)
+    
+    # Update the last selected aspect ratio when loading a config
+    last_selected_aspect_ratio = config_data.get("aspect_ratio", "16:9")
+    
     return (
         f"Config '{selected_config}' loaded.",
         config_data.get("model_choice", "WAN 2.1 1.3B (Text/Video-to-Video)"),
@@ -641,7 +654,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 "12GB": "0",
                 "16GB": "0",
                 "24GB": "6,000,000,000",
-                "32GB": "15,000,000,000",
+                "32GB": "14,000,000,000",
                 "48GB": "22,000,000,000",
                 "80GB": "22,000,000,000"
             }
@@ -687,7 +700,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                     "12GB": "0",
                     "16GB": "0",
                     "24GB": "3,000,000,000",
-                    "32GB": "6,750,000,000",
+                    "32GB": "6,500,000,000",
                     "48GB": "16,000,000,000",
                     "80GB": "22,000,000,000"
                 }
@@ -719,7 +732,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 "12GB": "0",
                 "16GB": "0",
                 "24GB": "4,250,000,000",
-                "32GB": "7,250,000,000",
+                "32GB": "6,500,000,000",
                 "48GB": "22,000,000,000",
                 "80GB": "22,000,000,000"
             }
@@ -734,7 +747,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 "12GB": "0",
                 "16GB": "0",
                 "24GB": "3,000,000,000",
-                "32GB": "5,750,000,000",
+                "32GB": "5,500,000,000",
                 "48GB": "14,500,000,000",
                 "80GB": "22,000,000,000"
             }
@@ -749,7 +762,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 "12GB": "1,500,000,000",
                 "16GB": "3,500,000,000",
                 "24GB": "8,000,000,000",
-                "32GB": "11,000,000,000",
+                "32GB": "10,500,000,000",
                 "48GB": "22,000,000,000",
                 "80GB": "22,000,000,000"
             }
@@ -764,7 +777,7 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
                 "12GB": "0",
                 "16GB": "0",
                 "24GB": "3,000,000,000",
-                "32GB": "5,750,000,000",
+                "32GB": "5,500,000,000",
                 "48GB": "16,000,000,000",
                 "80GB": "22,000,000,000"
             }
@@ -773,19 +786,36 @@ def update_vram_and_resolution(model_choice, preset, torch_dtype):
         return mapping.get(preset, "12000000000"), resolution_choices, default_aspect
 
 def update_model_settings(model_choice, current_vram_preset, torch_dtype):
+    global last_selected_aspect_ratio
+    
     num_persistent_val, aspect_options, default_aspect = update_vram_and_resolution(model_choice, current_vram_preset, torch_dtype)
-    if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P":
-        default_width, default_height = ASPECT_RATIOS_1_3b.get(default_aspect, (832, 480))
+    
+    # Use the saved aspect ratio if available, otherwise use the default
+    aspect_to_use = last_selected_aspect_ratio if last_selected_aspect_ratio else default_aspect
+    
+    # If aspect_to_use is not in the available options for this model, use the default
+    if (model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P"):
+        if aspect_to_use not in ASPECT_RATIOS_1_3b:
+            aspect_to_use = default_aspect
+        default_width, default_height = ASPECT_RATIOS_1_3b.get(aspect_to_use, (832, 480))
     else:
-        default_width, default_height = ASPECT_RATIOS_14b.get(default_aspect, (1280, 720))
+        if aspect_to_use not in ASPECT_RATIOS_14b:
+            aspect_to_use = default_aspect
+        default_width, default_height = ASPECT_RATIOS_14b.get(aspect_to_use, (1280, 720))
+    
     return (
-        gr.update(choices=aspect_options, value=default_aspect),
+        gr.update(choices=aspect_options, value=aspect_to_use),
         default_width,
         default_height,
         num_persistent_val
     )
 
 def update_width_height(aspect_ratio, model_choice):
+    global last_selected_aspect_ratio
+    
+    # Save the user-selected aspect ratio
+    last_selected_aspect_ratio = aspect_ratio
+    
     if model_choice == "WAN 2.1 1.3B (Text/Video-to-Video)" or model_choice == "WAN 2.1 14B Image-to-Video 480P":
         default_width, default_height = ASPECT_RATIOS_1_3b.get(aspect_ratio, (832, 480))
     else:
@@ -1798,6 +1828,10 @@ def batch_process_videos(
                 else:
                     log_text += f"[CMD] Skipping Practical-RIFE for batch generated video because its FPS ({source_fps:.2f}) is above 29.\n"
         if extend_factor > 1:
+            # Save original pipeline and config before extension processing
+            original_pipeline = loaded_pipeline
+            original_pipeline_config = loaded_pipeline_config.copy()
+            
             if is_input_video:
                 original_file_path = copy_to_outputs(original_file_path)
                 segments = [original_file_path]
@@ -2005,6 +2039,13 @@ def batch_process_videos(
                         log_text += f"[CMD] Skipping Practical-RIFE for batch generated video extension because its FPS ({source_fps:.2f}) is above 29.\n"
             # Remove duplicate PR RIFE application blocks
             # End of extension factor > 1 branch
+            
+            # Restore original pipeline and config after finishing extension processing
+            if original_pipeline is not None and original_pipeline_config:
+                loaded_pipeline = original_pipeline
+                loaded_pipeline_config = original_pipeline_config
+                log_text += f"[CMD] Restored original pipeline after extension processing.\n"
+                
         # Only apply RIFE if we're not in an extend_factor > 1 branch
         elif pr_rife_enabled:
             cap = cv2.VideoCapture(output_filename)
