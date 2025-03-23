@@ -282,6 +282,7 @@ def get_default_config():
         "lora_model_4": "None",
         "lora_alpha_4": 1.0,
         "clear_cache_after_gen": DEFAULT_CLEAR_CACHE,
+        "prompt": "",
         "negative_prompt": "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down",
         "save_prompt": True,
         "multiline": False,
@@ -357,9 +358,13 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
                 lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4, clear_cache_after_gen,
                 negative_prompt, save_prompt, multiline, num_generations, use_random_seed, seed, quality, fps, num_frames,
                 denoising_strength, tar_lang, batch_folder, batch_output_folder, skip_overwrite, save_prompt_batch,
-                enable_teacache, tea_cache_l1_thresh, tea_cache_model_id, extend_factor):
+                enable_teacache, tea_cache_l1_thresh, tea_cache_model_id, extend_factor, prompt):
     if not config_name:
         return "Config name cannot be empty", gr.update(choices=get_config_list())
+    
+    # Ensure prompt is a string to prevent JSON serialization issues
+    prompt = str(prompt) if prompt is not None else ""
+    
     config_data = {
         "model_choice": model_choice,
         "vram_preset": vram_preset,
@@ -385,6 +390,7 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
         "lora_model_4": lora_model_4,
         "lora_alpha_4": lora_alpha_4,
         "clear_cache_after_gen": clear_cache_after_gen,
+        "prompt": prompt,
         "negative_prompt": negative_prompt,
         "save_prompt": save_prompt,
         "multiline": multiline,
@@ -405,12 +411,16 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
         "tea_cache_model_id": tea_cache_model_id,
         "extend_factor": extend_factor
     }
-    config_path = os.path.join(CONFIG_DIR, f"{config_name}.json")
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, indent=4)
-    with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
-        f.write(config_name)
-    return f"Config '{config_name}' saved.", gr.update(choices=get_config_list(), value=config_name)
+    
+    try:
+        config_path = os.path.join(CONFIG_DIR, f"{config_name}.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+        with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(config_name)
+        return f"Config '{config_name}' saved.", gr.update(choices=get_config_list(), value=config_name)
+    except Exception as e:
+        return f"Error saving config: {str(e)}", gr.update(choices=get_config_list())
 
 def load_config(selected_config):
     global last_selected_aspect_ratio
@@ -461,62 +471,74 @@ def load_config(selected_config):
             default_vals["enable_teacache"],
             default_vals["tea_cache_l1_thresh"],
             default_vals["tea_cache_model_id"],
-            default_vals["extend_factor"]
+            default_vals["extend_factor"],
+            default_vals["prompt"]
         )
-    with open(os.path.join(CONFIG_DIR, f"{selected_config}.json"), "r", encoding="utf-8") as f:
-        config_data = json.load(f)
-    with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
-        f.write(selected_config)
     
-    # Update the last selected aspect ratio when loading a config
-    last_selected_aspect_ratio = config_data.get("aspect_ratio", "16:9")
-    
-    return (
-        f"Config '{selected_config}' loaded.",
-        config_data.get("model_choice", "WAN 2.1 1.3B (Text/Video-to-Video)"),
-        config_data.get("vram_preset", "24GB"),
-        config_data.get("aspect_ratio", "16:9"),
-        config_data.get("width", 832),
-        config_data.get("height", 480),
-        config_data.get("auto_crop", True),
-        config_data.get("auto_scale", False),
-        config_data.get("tiled", True),
-        config_data.get("inference_steps", 50),
-        config_data.get("pr_rife", True),
-        config_data.get("pr_rife_multiplier", "2x FPS"),
-        config_data.get("cfg_scale", 6.0),
-        config_data.get("sigma_shift", 6.0),
-        config_data.get("num_persistent", "12000000000"),
-        config_data.get("torch_dtype", "torch.bfloat16"),
-        config_data.get("lora_model", "None"),
-        config_data.get("lora_alpha", 1.0),
-        config_data.get("lora_model_2", "None"),
-        config_data.get("lora_alpha_2", 1.0),
-        config_data.get("lora_model_3", "None"),
-        config_data.get("lora_alpha_3", 1.0),
-        config_data.get("lora_model_4", "None"),
-        config_data.get("lora_alpha_4", 1.0),
-        config_data.get("clear_cache_after_gen", DEFAULT_CLEAR_CACHE),
-        config_data.get("negative_prompt", "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down"),
-        config_data.get("save_prompt", True),
-        config_data.get("multiline", False),
-        config_data.get("num_generations", 1),
-        config_data.get("use_random_seed", True),
-        config_data.get("seed", ""),
-        config_data.get("quality", 5),
-        config_data.get("fps", 16),
-        config_data.get("num_frames", 81),
-        config_data.get("denoising_strength", 0.7),
-        config_data.get("tar_lang", "EN"),
-        config_data.get("batch_folder", "batch_inputs"),
-        config_data.get("batch_output_folder", "batch_outputs"),
-        config_data.get("skip_overwrite", True),
-        config_data.get("save_prompt_batch", True),
-        config_data.get("enable_teacache", False),
-        config_data.get("tea_cache_l1_thresh", 0.15),
-        config_data.get("tea_cache_model_id", "Wan2.1-T2V-1.3B"),
-        config_data.get("extend_factor", 1)
-    )
+    try:
+        with open(os.path.join(CONFIG_DIR, f"{selected_config}.json"), "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+        with open(LAST_CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(selected_config)
+        
+        # Update the last selected aspect ratio when loading a config
+        last_selected_aspect_ratio = config_data.get("aspect_ratio", "16:9")
+        
+        return (
+            f"Config '{selected_config}' loaded.",
+            config_data.get("model_choice", "WAN 2.1 1.3B (Text/Video-to-Video)"),
+            config_data.get("vram_preset", "24GB"),
+            config_data.get("aspect_ratio", "16:9"),
+            config_data.get("width", 832),
+            config_data.get("height", 480),
+            config_data.get("auto_crop", True),
+            config_data.get("auto_scale", False),
+            config_data.get("tiled", True),
+            config_data.get("inference_steps", 50),
+            config_data.get("pr_rife", True),
+            config_data.get("pr_rife_multiplier", "2x FPS"),
+            config_data.get("cfg_scale", 6.0),
+            config_data.get("sigma_shift", 6.0),
+            config_data.get("num_persistent", "12000000000"),
+            config_data.get("torch_dtype", "torch.bfloat16"),
+            config_data.get("lora_model", "None"),
+            config_data.get("lora_alpha", 1.0),
+            config_data.get("lora_model_2", "None"),
+            config_data.get("lora_alpha_2", 1.0),
+            config_data.get("lora_model_3", "None"),
+            config_data.get("lora_alpha_3", 1.0),
+            config_data.get("lora_model_4", "None"),
+            config_data.get("lora_alpha_4", 1.0),
+            config_data.get("clear_cache_after_gen", DEFAULT_CLEAR_CACHE),
+            config_data.get("negative_prompt", "Overexposure, static, blurred details, subtitles, paintings, pictures, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, mutilated, redundant fingers, poorly painted hands, poorly painted faces, deformed, disfigured, deformed limbs, fused fingers, cluttered background, three legs, a lot of people in the background, upside down"),
+            config_data.get("save_prompt", True),
+            config_data.get("multiline", False),
+            config_data.get("num_generations", 1),
+            config_data.get("use_random_seed", True),
+            config_data.get("seed", ""),
+            config_data.get("quality", 5),
+            config_data.get("fps", 16),
+            config_data.get("num_frames", 81),
+            config_data.get("denoising_strength", 0.7),
+            config_data.get("tar_lang", "EN"),
+            config_data.get("batch_folder", "batch_inputs"),
+            config_data.get("batch_output_folder", "batch_outputs"),
+            config_data.get("skip_overwrite", True),
+            config_data.get("save_prompt_batch", True),
+            config_data.get("enable_teacache", False),
+            config_data.get("tea_cache_l1_thresh", 0.15),
+            config_data.get("tea_cache_model_id", "Wan2.1-T2V-1.3B"),
+            config_data.get("extend_factor", 1),
+            config_data.get("prompt", "")
+        )
+    except Exception as e:
+        return (
+            f"Error loading config: {str(e)}",
+            default_vals["model_choice"],
+            # ...rest of default values...
+            default_vals["extend_factor"],
+            default_vals["prompt"]
+        )
 
 def process_random_prompt(prompt):
     pattern = r'<random:\s*([^>]+)>'
@@ -2302,7 +2324,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V50 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V51 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
@@ -2310,7 +2332,7 @@ if __name__ == "__main__":
                     cancel_button = gr.Button("Cancel")
                     fast_preset_button = gr.Button("Apply Fast Preset", variant="huggingface")
                     enhance_button = gr.Button("Prompt Enhance", variant="primary")
-                prompt_box = gr.Textbox(label="Prompt (A <random: green , yellow , etc > car) will take random word with trim like : A yellow car", placeholder="Describe the video you want to generate", lines=5)                
+                prompt_box = gr.Textbox(label="Prompt (A <random: green , yellow , etc > car) will take random word with trim like : A yellow car", placeholder="Describe the video you want to generate", lines=5, value=config_loaded.get("prompt", ""))                
                 with gr.Row():
                     gr.Markdown("### Model & Resolution")
                 with gr.Row():
@@ -2558,7 +2580,8 @@ if __name__ == "__main__":
                 quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
                 batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
                 enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox,
-                extend_slider
+                extend_slider,
+                prompt_box
             ]
         )
         save_config_button.click(
@@ -2576,7 +2599,8 @@ if __name__ == "__main__":
                 quality_slider, fps_slider, num_frames_slider, denoising_slider, tar_lang,
                 batch_folder_input, batch_output_folder_input, skip_overwrite_checkbox, save_prompt_batch_checkbox,
                 enable_teacache_checkbox, tea_cache_l1_thresh_slider, tea_cache_model_id_textbox,
-                extend_slider
+                extend_slider,
+                prompt_box
             ],
             outputs=[config_status, config_dropdown]
         )
