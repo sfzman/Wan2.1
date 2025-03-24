@@ -117,8 +117,15 @@ def generate_prompt_info(parameters):
     details += f"Auto Crop: {'Enabled' if parameters.get('auto_crop', False) else 'Disabled'}\n"
     details += f"Final Resolution: {parameters['width']}x{parameters['height']}\n"
     
+    # Add individual video generation duration if available
+    if 'video_generation_duration' in parameters:
+        details += f"Video Generation Duration: {parameters['video_generation_duration']:.2f} seconds"
+        if parameters.get('include_minutes', False):
+            details += f" / {parameters['video_generation_duration']/60:.2f} minutes"
+        details += "\n"
+    
     if 'generation_duration' in parameters:
-        details += f"Generation Duration: {parameters['generation_duration']:.2f} seconds"
+        details += f"Total Processing Duration: {parameters['generation_duration']:.2f} seconds"
         if parameters.get('include_minutes', False):
             details += f" / {parameters['generation_duration']/60:.2f} minutes"
         details += "\n"
@@ -1249,6 +1256,10 @@ def generate_videos(
             
             original_filename = os.path.join(output_folder, f"{base_name}.mp4")
             # Generate based on model type
+
+            # Start timing for this specific video
+            video_start_time = time.time()
+
             if model_choice == "1.3B":
                 if input_video is not None:
                     video_obj = VideoData(input_video if isinstance(input_video, str) else input_video.name, height=target_height, width=target_width)
@@ -1289,6 +1300,11 @@ def generate_videos(
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 return None, err_msg, str(last_used_seed or "")
+
+            # Calculate the duration for this specific video
+            video_duration = time.time() - video_start_time
+            log_text += f"[CMD] Original video generation duration: {video_duration:.2f} seconds\n"
+
             save_video(video_data, original_filename, fps=fps, quality=quality)
             log_text += f"[CMD] Saved original video: {original_filename}\n"
             if save_prompt:
@@ -1320,6 +1336,7 @@ def generate_videos(
                     "auto_crop": auto_crop,
                     "width": target_width,
                     "height": target_height,
+                    "video_generation_duration": video_duration,
                     "generation_duration": time.time() - overall_start_time,
                     "include_minutes": True
                 })
@@ -1385,11 +1402,19 @@ def generate_videos(
                 extension_filename = os.path.join(output_folder, f"{base_name}_ext{ext_iter}.mp4")
                 log_text += f"[CMD] Generating extension segment {ext_iter} using model {extension_model_choice}\n"
                 try:
+                    # Start timing for this extension segment
+                    ext_start_time = time.time()
+                    
                     video_data_ext = loaded_pipeline(
                         input_image=last_frame,
                         **common_args_ext,
                         cancel_fn=lambda: cancel_flag
                     )
+                    
+                    # Calculate the duration for this extension
+                    ext_duration = time.time() - ext_start_time
+                    log_text += f"[CMD] Extension segment {ext_iter} generation duration: {ext_duration:.2f} seconds\n"
+                    
                     if not video_data_ext:
                         log_text += "[CMD] Extension generation returned no data.\n"
                         break
@@ -1424,6 +1449,7 @@ def generate_videos(
                             "auto_crop": auto_crop,
                             "width": new_width,
                             "height": new_height,
+                            "video_generation_duration": ext_duration,
                             "generation_duration": time.time() - overall_start_time,
                             "include_minutes": True
                         })
@@ -1903,7 +1929,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V53 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V54 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
