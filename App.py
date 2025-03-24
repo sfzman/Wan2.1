@@ -1384,7 +1384,7 @@ def generate_videos(
                     "prompt": process_random_prompt(p),
                     "negative_prompt": negative_prompt,
                     "num_inference_steps": int(inference_steps),
-                    "seed": random.randint(0, 2**32 - 1) if use_random_seed else (current_seed + ext_iter),
+                    "seed": random.randint(0, 2**32 - 1) if use_random_seed else (current_seed),
                     "tiled": tiled,
                     "width": new_width,
                     "height": new_height,
@@ -1929,7 +1929,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V54 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V55 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
