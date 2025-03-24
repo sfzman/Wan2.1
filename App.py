@@ -1152,7 +1152,7 @@ def generate_videos(
          "lora_model_2": lora_model_2,
          "lora_alpha_2": lora_alpha_2,
          "lora_model_3": lora_model_3,
-         "lora_alpha_3": lora_alpha_slider_3,
+         "lora_alpha_3": lora_model_3 and lora_alpha_slider_3 or None,
          "lora_model_4": lora_model_4,
          "lora_alpha_4": lora_alpha_4
     }
@@ -1206,6 +1206,26 @@ def generate_videos(
                 counter += 1
 
             log_text += f"[CMD] Generation with prompt: {p} and seed: {current_seed}\n"
+
+            # --- FIX: Ensure pipeline is set to the base generation model ---
+            base_config = {
+                "model_choice": model_choice,
+                "torch_dtype": torch_dtype,
+                "num_persistent": vram_value,
+                "lora_model": lora_model,
+                "lora_alpha": lora_alpha,
+                "lora_model_2": lora_model_2,
+                "lora_alpha_2": lora_alpha_2,
+                "lora_model_3": lora_model_3,
+                "lora_alpha_3": lora_model_3 and lora_alpha_slider_3 or None,
+                "lora_model_4": lora_model_4,
+                "lora_alpha_4": lora_alpha_4
+            }
+            if loaded_pipeline is None or loaded_pipeline_config.get("model_choice") != model_choice:
+                loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, base_config)
+                if loaded_pipeline is None:
+                    loaded_pipeline = load_wan_pipeline(model_choice, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
+                    loaded_pipeline_config = base_config
 
             # Generate the original video using the pipeline
             common_args = {
@@ -1307,6 +1327,21 @@ def generate_videos(
                     f.write(generation_details)
                 log_text += f"[CMD] Saved prompt info for original video: {txt_filename}\n"
             
+            # --- NEW CODE: Switch pipeline for extension segments if needed ---
+            extension_model_choice = model_choice
+            if model_choice == "1.3B":
+                extension_model_choice = "14B_image_480p"
+            elif model_choice == "14B_text":
+                extension_model_choice = "14B_image_720p"
+            if extension_model_choice != model_choice:
+                log_text += f"[CMD] Switching pipeline for extension segments to model {extension_model_choice}\n"
+                new_config_ext = new_config.copy()
+                new_config_ext["model_choice"] = extension_model_choice
+                loaded_pipeline, loaded_pipeline_config = clear_pipeline_if_needed(loaded_pipeline, loaded_pipeline_config, new_config_ext)
+                if loaded_pipeline is None:
+                    loaded_pipeline = load_wan_pipeline(extension_model_choice, torch_dtype, vram_value, lora_path=effective_loras, lora_alpha=None)
+                    loaded_pipeline_config = new_config_ext
+
             original_improved = None
             ext_segments = []
             ext_segments_improved = []
@@ -1348,7 +1383,7 @@ def generate_videos(
                     common_args_ext["tea_cache_model_id"] = ""
                     
                 extension_filename = os.path.join(output_folder, f"{base_name}_ext{ext_iter}.mp4")
-                log_text += f"[CMD] Generating extension segment {ext_iter} using model {model_choice_radio}\n"
+                log_text += f"[CMD] Generating extension segment {ext_iter} using model {extension_model_choice}\n"
                 try:
                     video_data_ext = loaded_pipeline(
                         input_image=last_frame,
@@ -1868,7 +1903,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V52 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V53 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
