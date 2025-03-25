@@ -1286,6 +1286,18 @@ def generate_videos(
                     processed_image = auto_scale_image(original_image, target_width, target_height)
                 else:
                     processed_image = original_image
+
+                # Save the auto processed image into auto_pre_processed_images folder
+                pre_processed_dir = "auto_pre_processed_images"
+                if not os.path.exists(pre_processed_dir):
+                    os.makedirs(pre_processed_dir)
+                save_filename = os.path.join(pre_processed_dir, f"auto_processed_{int(time.time())}.png")
+                try:
+                    processed_image.save(save_filename)
+                    print(f"[CMD] Auto processed image saved to: {save_filename}")
+                except Exception as e:
+                    print(f"[CMD] Failed to save auto processed image: {e}")
+
                 video_data = loaded_pipeline(
                     input_image=processed_image,
                     **common_args,
@@ -1929,7 +1941,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V55 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V56 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
