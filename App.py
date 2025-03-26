@@ -1957,7 +1957,7 @@ def refresh_lora_list():
     return update_val, update_val, update_val, update_val
 
 def apply_fast_preset():
-    return 20, True, 0.15, 10
+    return 20, True, 0.15, 5.6
 
 # ------------------------- Main application with Gradio -------------------------
 
