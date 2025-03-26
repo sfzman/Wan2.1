@@ -254,8 +254,8 @@ def get_default_config():
         "inference_steps": 50,
         "pr_rife": True,
         "pr_rife_multiplier": "2x FPS",
-        "cfg_scale": 6.0,
-        "sigma_shift": 6.0,
+        "cfg_scale": 5.0,
+        "sigma_shift": 5.6,
         "num_persistent": "12000000000",
         "torch_dtype": "torch.bfloat16",
         "lora_model": "None",
@@ -578,8 +578,8 @@ def load_config(selected_config):
             config_data.get("inference_steps", 50),
             config_data.get("pr_rife", True),
             config_data.get("pr_rife_multiplier", "2x FPS"),
-            config_data.get("cfg_scale", 6.0),
-            config_data.get("sigma_shift", 6.0),
+            config_data.get("cfg_scale", 5.0),
+            config_data.get("sigma_shift", 5.6),
             config_data.get("num_persistent", "12000000000"),
             config_data.get("torch_dtype", "torch.bfloat16"),
             config_data.get("lora_model", "None"),
@@ -1974,7 +1974,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V56 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V57 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
