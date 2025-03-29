@@ -23,6 +23,7 @@ models
 *.html
 *.pdf
 *.whl
+temp
 used_last_frames
 cache
 DiffSynth-Studio
