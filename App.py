@@ -150,6 +150,12 @@ def merge_videos(video_files, output_dir="outputs"):
     return merged_video
 
 def copy_to_outputs(video_path):
+    """
+    DEPRECATED: This function is no longer used in the main workflow.
+    It was previously used to copy input videos to the outputs folder.
+    
+    Kept for backward compatibility with older code or plugins.
+    """
     outputs_dir = "outputs"
     if not os.path.exists(outputs_dir):
         os.makedirs(outputs_dir)
@@ -1114,12 +1120,11 @@ def generate_videos(
 
     input_was_video = False
     orig_video_path = None
-    copied_input_video = None
     if input_image is None and input_video is not None:
         input_was_video = True
         orig_video_path = input_video if isinstance(input_video, str) else input_video.name
-        copied_input_video = copy_to_outputs(orig_video_path)
-        log_text += f"[CMD] Copied input video to: {copied_input_video}\n"
+        # Don't copy the input video to outputs folder
+        log_text += f"[CMD] Using input video: {orig_video_path}\n"
         
         # Note: We'll re-encode the video later after effective_num_frames is defined
 
@@ -1187,8 +1192,8 @@ def generate_videos(
             # Re-encode the input video to 16 FPS for video-to-video use
             if input_was_video:
                 log_text += f"[CMD] Processing video-to-video with 1.3B model, checking if re-encoding to 16 FPS is needed...\n"
-                reencoded_video = reencode_video_to_16fps(copied_input_video, effective_num_frames, target_width=target_width, target_height=target_height)
-                if reencoded_video != copied_input_video:
+                reencoded_video = reencode_video_to_16fps(orig_video_path, effective_num_frames, target_width=target_width, target_height=target_height)
+                if reencoded_video != orig_video_path:
                     log_text += f"[CMD] Re-encoded input video to 16 FPS: {reencoded_video}\n"
                     # Update the input_video to use the re-encoded version
                     input_video = reencoded_video
@@ -1504,7 +1509,7 @@ def generate_videos(
                             "extension_segment": ext_iter,
                             "total_extensions": additional_extensions,
                             "source_frame": os.path.basename(prev_video),
-                            "input_file": copied_input_video if input_was_video else "",
+                            "input_file": orig_video_path if input_was_video else "",
                             "is_video": input_was_video,
                             "has_input_video": input_was_video,
                             "denoising_strength": denoising_strength,
@@ -2007,7 +2012,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V61 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V62 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
