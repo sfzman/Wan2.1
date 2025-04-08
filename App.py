@@ -9,6 +9,7 @@ import json
 import gc
 import re
 import shutil
+import platform
 
 import psutil
 DEFAULT_CLEAR_CACHE = True if psutil.virtual_memory().total < 31 * 1024**3 else False
@@ -24,6 +25,7 @@ from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
+from video_utils import reencode_video_to_16fps, clean_temp_videos
 
 # Global variables
 loaded_pipeline = None
@@ -1118,6 +1120,8 @@ def generate_videos(
         orig_video_path = input_video if isinstance(input_video, str) else input_video.name
         copied_input_video = copy_to_outputs(orig_video_path)
         log_text += f"[CMD] Copied input video to: {copied_input_video}\n"
+        
+        # Note: We'll re-encode the video later after effective_num_frames is defined
 
     if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
         model_choice = "1.3B"
@@ -1169,6 +1173,9 @@ def generate_videos(
         else:
             original_image = None
 
+    # Define effective_num_frames before any potential re-encoding
+    effective_num_frames = int(num_frames)
+    
     if model_choice == "1.3B" and input_video is not None:
         original_video_path = input_video if isinstance(input_video, str) else input_video.name
         cap = cv2.VideoCapture(original_video_path)
@@ -1176,6 +1183,15 @@ def generate_videos(
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             effective_num_frames = min(int(num_frames), total_frames)
             print(f"[CMD] Detected input video frame count: {total_frames}, using effective frame count: {effective_num_frames}")
+            
+            # Re-encode the input video to 16 FPS for video-to-video use
+            if input_was_video:
+                log_text += f"[CMD] Processing video-to-video with 1.3B model, checking if re-encoding to 16 FPS is needed...\n"
+                reencoded_video = reencode_video_to_16fps(copied_input_video, effective_num_frames, target_width=target_width, target_height=target_height)
+                if reencoded_video != copied_input_video:
+                    log_text += f"[CMD] Re-encoded input video to 16 FPS: {reencoded_video}\n"
+                    # Update the input_video to use the re-encoded version
+                    input_video = reencoded_video
         else:
             effective_num_frames = int(num_frames)
             print("[CMD] Could not open input video, using provided frame count")
@@ -1656,13 +1672,16 @@ def generate_videos(
     log_text += f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds ({overall_duration/60:.2f} minutes). Last used seed: {last_used_seed}\n"
     print(f"[CMD] Generation complete. Overall Duration: {overall_duration:.2f} seconds. Last used seed: {last_used_seed}")
     
+    # Clean up temporary re-encoded videos
+    clean_temp_videos()
+    
     if clear_cache_after_gen:
         loaded_pipeline = None
         loaded_pipeline_config = {}
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            
+    
     if final_output_video and os.path.exists(final_output_video):
         return final_output_video, log_text, str(last_used_seed or "")
     elif final_output_video:
@@ -1734,6 +1753,17 @@ def batch_process_videos(
         if ext_lower == ".mp4":
             image_in = None
             video_in = file_path
+            
+            # Re-encode the video to 16 FPS only if we're doing video-to-video with the 1.3B model
+            # Don't re-encode for image-to-video models that just use the last frame
+            if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
+                # Ensure num_frames is valid before re-encoding
+                frames_to_use = int(num_frames)
+                log_text += f"[CMD] Processing video-to-video with 1.3B model for {file}, checking if re-encoding needed...\n"
+                reencoded_video = reencode_video_to_16fps(video_in, frames_to_use, target_width=int(width), target_height=int(height))
+                if reencoded_video != video_in:
+                    log_text += f"[CMD] Re-encoded input video {file} to 16 FPS: {reencoded_video}\n"
+                    video_in = reencoded_video
         else:
             try:
                 loaded_img = Image.open(file_path)
@@ -1768,8 +1798,12 @@ def batch_process_videos(
         
         if cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user after file completion.\n"
+            # Clean up temporary re-encoded videos
+            clean_temp_videos()
             return log_text
             
+    # Clean up temporary re-encoded videos
+    clean_temp_videos()
     return log_text
 
 def cancel_batch_process():
@@ -1780,46 +1814,29 @@ def cancel_batch_process():
     return "Cancelling batch process...", "Cancelling any active generation..."
 
 def get_next_filename(extension, output_dir="outputs"):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    """Get next available filename in sequence."""
+    os.makedirs(output_dir, exist_ok=True)
     
-    if extension.startswith("_"):
-        base_name = extension[1:].split(".")[0]
-        file_ext = "." + extension.split(".")[-1]
-        
-        existing_files = [f for f in os.listdir(output_dir) if base_name in f and f.endswith(file_ext)]
-        current_numbers = []
-        for file in existing_files:
-            try:
-                match = re.search(r'(\d+)_' + re.escape(base_name), file)
-                if match:
-                    current_numbers.append(int(match.group(1)))
-            except:
-                pass
-        
-        if not current_numbers:
-            next_number = 1
-        else:
-            next_number = max(current_numbers) + 1
-        
-        return os.path.join(output_dir, f"{next_number}_{base_name}{file_ext}")
-    else:
-        counter = 1
-        while True:
-            filename = os.path.join(output_dir, f"{counter}{extension}")
-            if not os.path.exists(filename):
-                return filename
-            counter += 1
+    counter = 1
+    while True:
+        filename = os.path.join(output_dir, f"generation_{counter:04d}.{extension}")
+        if not os.path.exists(filename):
+            return filename
+        counter += 1
 
 def open_outputs_folder():
-    outputs_dir = os.path.abspath("outputs")
-    if os.name == 'nt':
-        os.startfile(outputs_dir)
-    elif os.name == 'posix':
-        subprocess.Popen(["xdg-open", outputs_dir])
-    else:
-        print("[CMD] Opening folder not supported on this OS.")
-    return f"Opened {outputs_dir}"
+    # Determine the outputs folder path based on the current platform
+    outputs_path = os.path.abspath("outputs")
+    try:
+        if platform.system() == "Windows":
+            os.startfile(outputs_path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", outputs_path])
+        else:  # Linux or other Unix-like
+            subprocess.run(["xdg-open", outputs_path])
+        return f"Opened outputs folder at {outputs_path}"
+    except Exception as e:
+        return f"Error opening outputs folder: {e}"
 
 model_manager = ModelManager(device="cpu")
 
@@ -1959,6 +1976,22 @@ def refresh_lora_list():
 def apply_fast_preset():
     return 20, True, 0.15, 5.6
 
+def clean_temp_videos():
+    """Clean up temporary videos that were created during re-encoding"""
+    temp_dir = "temp_videos"
+    if os.path.exists(temp_dir) and os.path.isdir(temp_dir):
+        try:
+            for file in os.listdir(temp_dir):
+                if file.startswith("reencoded_"):
+                    file_path = os.path.join(temp_dir, file)
+                    try:
+                        os.remove(file_path)
+                        print(f"[CMD] Removed temporary video: {file_path}")
+                    except Exception as e:
+                        print(f"[CMD] Error removing temporary video {file_path}: {e}")
+        except Exception as e:
+            print(f"[CMD] Error cleaning temp videos: {e}")
+
 # ------------------------- Main application with Gradio -------------------------
 
 if __name__ == "__main__":
@@ -1974,7 +2007,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V58 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V61 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
