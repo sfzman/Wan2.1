@@ -221,6 +221,23 @@ def reencode_video_to_16fps(input_video_path, num_frames, target_width=None, tar
         
         print(f"[CMD] Successfully extracted and processed {len(frames)} frames")
         
+        # Verify frame files exist in temporary directory
+        frame_files = sorted([f for f in os.listdir(frames_dir) if f.startswith("frame_")])
+        if len(frame_files) != num_frames:
+            print(f"[CMD] Warning: Found {len(frame_files)} frame files but expected {num_frames}")
+            # Ensure all frames exist by checking for gaps
+            for i in range(num_frames):
+                expected_frame = f"frame_{i:06d}.png"
+                if expected_frame not in frame_files:
+                    print(f"[CMD] Missing frame file: {expected_frame}, duplicating adjacent frame")
+                    # Find the closest existing frame
+                    closest_idx = min(max(0, i-1), len(frames)-1)
+                    # Save a copy of the closest frame
+                    cv2.imwrite(os.path.join(frames_dir, expected_frame), frames[closest_idx])
+            # Recheck frame files
+            frame_files = sorted([f for f in os.listdir(frames_dir) if f.startswith("frame_")])
+            print(f"[CMD] After fix: {len(frame_files)} frame files")
+        
         # Check if input video has audio - use direct FFprobe method
         print(f"[CMD] Checking if input video has audio: {input_video_path}")
         has_audio = check_video_has_audio(input_video_path)
@@ -291,13 +308,14 @@ def reencode_video_to_16fps(input_video_path, num_frames, target_width=None, tar
         if temp_audio_file and os.path.exists(temp_audio_file) and os.path.getsize(temp_audio_file) > 0:
             print(f"[CMD] Using two-pass encoding to preserve audio quality")
             
-            # First create video without audio
+            # First create video without audio - using vsync 0 to preserve all frames
             temp_video_file = os.path.join(output_folder, f"temp_video_{timestamp}.mp4")
             video_cmd = [
                 'ffmpeg', '-y',
                 '-framerate', '16',
                 '-i', f'"{os.path.join(frames_dir, "frame_%06d.png")}"',
                 '-c:v', 'libx264',
+                '-fps_mode', 'passthrough',
                 '-profile:v', 'high',
                 '-level', '3.1',
                 '-preset', 'veryslow',
@@ -309,6 +327,32 @@ def reencode_video_to_16fps(input_video_path, num_frames, target_width=None, tar
             
             print(f"[CMD] Creating video without audio...")
             subprocess.run(' '.join(video_cmd), shell=True)
+            
+            # Verify the video has the correct number of frames
+            verify_cap = cv2.VideoCapture(temp_video_file)
+            if verify_cap.isOpened():
+                temp_frames = int(verify_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                verify_cap.release()
+                
+                if temp_frames != num_frames:
+                    print(f"[CMD] Warning: Intermediate video has {temp_frames} frames, but expected {num_frames}")
+                    
+                    # Try again with an alternative method if frame count is incorrect
+                    alt_video_cmd = [
+                        'ffmpeg', '-y',
+                        '-r', '16',
+                        '-start_number', '0',
+                        '-i', f'"{os.path.join(frames_dir, "frame_%06d.png")}"',
+                        '-vframes', str(num_frames),
+                        '-c:v', 'libx264',
+                        '-fps_mode', 'passthrough',
+                        '-pix_fmt', 'yuv420p',
+                        '-an',
+                        f'"{temp_video_file}"'
+                    ]
+                    
+                    print(f"[CMD] Retrying with alternative encoding method...")
+                    subprocess.run(' '.join(alt_video_cmd), shell=True)
             
             # Then combine video and audio
             final_cmd = [
@@ -333,13 +377,15 @@ def reencode_video_to_16fps(input_video_path, num_frames, target_width=None, tar
                     print(f"[CMD] Warning: Could not remove temp video file: {e}")
                 
         else:
-            # Standard encoding without audio
+            # Standard encoding without audio - using vsync 0 to preserve all frames
             print(f"[CMD] Encoding video without audio (no valid audio detected)")
             video_cmd = [
                 'ffmpeg', '-y',
                 '-framerate', '16',
                 '-i', f'"{os.path.join(frames_dir, "frame_%06d.png")}"',
                 '-c:v', 'libx264',
+                '-fps_mode', 'passthrough',
+                '-vframes', str(num_frames),
                 '-profile:v', 'high',
                 '-level', '3.1',
                 '-preset', 'veryslow',
@@ -351,20 +397,102 @@ def reencode_video_to_16fps(input_video_path, num_frames, target_width=None, tar
             
             subprocess.run(' '.join(video_cmd), shell=True)
         
-        # Verify the frame count
-        verify_cap = cv2.VideoCapture(reencoded_video)
-        if verify_cap.isOpened():
-            output_frames = int(verify_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            output_fps = verify_cap.get(cv2.CAP_PROP_FPS)
-            verify_cap.release()
-            verify_cap = None
-            print(f"[CMD] Re-encoded video has {output_frames} frames at {output_fps} FPS (target: {num_frames} frames at 16 FPS)")
+        # Verify the frame count and retry with different method if incorrect
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            verify_cap = cv2.VideoCapture(reencoded_video)
+            if verify_cap.isOpened():
+                output_frames = int(verify_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                output_fps = verify_cap.get(cv2.CAP_PROP_FPS)
+                verify_cap.release()
+                verify_cap = None
+                
+                print(f"[CMD] Re-encoded video has {output_frames} frames at {output_fps} FPS (target: {num_frames} frames at 16 FPS)")
+                
+                if output_frames == num_frames:
+                    print(f"[CMD] Frame count verified successfully")
+                    break
+                    
+                if attempt < max_attempts - 1:
+                    print(f"[CMD] Incorrect frame count ({output_frames} vs {num_frames}). Retrying with alternative method...")
+                    
+                    # Try more aggressive approach to force exact frame count
+                    retry_cmd = [
+                        'ffmpeg', '-y',
+                        '-r', '16',
+                        '-start_number', '0',
+                        '-i', f'"{os.path.join(frames_dir, "frame_%06d.png")}"',
+                        '-vframes', str(num_frames),
+                        '-c:v', 'libx264',
+                        '-fps_mode', 'passthrough',
+                        '-pix_fmt', 'yuv420p',
+                        f'"{reencoded_video}"'
+                    ]
+                    
+                    if temp_audio_file and os.path.exists(temp_audio_file) and os.path.getsize(temp_audio_file) > 0:
+                        # Include audio if available
+                        retry_cmd = [
+                            'ffmpeg', '-y',
+                            '-r', '16',
+                            '-start_number', '0',
+                            '-i', f'"{os.path.join(frames_dir, "frame_%06d.png")}"',
+                            '-i', f'"{temp_audio_file}"',
+                            '-vframes', str(num_frames),
+                            '-c:v', 'libx264',
+                            '-c:a', 'aac',
+                            '-b:a', '192k',
+                            '-fps_mode', 'passthrough',
+                            '-pix_fmt', 'yuv420p',
+                            f'"{reencoded_video}"'
+                        ]
+                    
+                    subprocess.run(' '.join(retry_cmd), shell=True)
+                else:
+                    print(f"[CMD] Warning: Could not achieve target frame count after {max_attempts} attempts")
+            else:
+                print(f"[CMD] Warning: Could not open re-encoded video for verification")
+                break
+        
+        # If after all retries we still don't have the right frame count, create a new version from scratch
+        final_verify_cap = cv2.VideoCapture(reencoded_video)
+        if final_verify_cap.isOpened():
+            final_frame_count = int(final_verify_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            final_verify_cap.release()
             
-            if output_frames != num_frames:
-                print(f"[CMD] Warning: Output video has {output_frames} frames, but target is {num_frames}")
-            
-            if abs(output_fps - 16) > 0.01:
-                print(f"[CMD] Warning: Output FPS is {output_fps}, not 16")
+            if final_frame_count != num_frames:
+                print(f"[CMD] Final verification failed: {final_frame_count} vs {num_frames}. Creating video directly from frames...")
+                
+                # Create a new video directly from the frames
+                # This is a last resort measure that's more reliable but may have lower quality
+                new_output = os.path.join(output_folder, f"reencoded_fixed_{timestamp}_{sanitized_name}{ext}")
+                
+                # Use OpenCV to create the video directly
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(new_output, fourcc, 16, (target_width, target_height))
+                
+                if out.isOpened():
+                    for i in range(num_frames):
+                        frame_path = os.path.join(frames_dir, f"frame_{i:06d}.png")
+                        if os.path.exists(frame_path):
+                            frame = cv2.imread(frame_path)
+                            if frame is not None:
+                                out.write(frame)
+                    
+                    out.release()
+                    print(f"[CMD] Created direct video with {num_frames} frames: {new_output}")
+                    
+                    # If we have audio, add it to the new video
+                    if temp_audio_file and os.path.exists(temp_audio_file) and os.path.getsize(temp_audio_file) > 0:
+                        with_audio = add_audio_to_video(input_video_path, new_output, output_folder, temp_audio_file)
+                        if with_audio[0] != new_output:
+                            reencoded_video = with_audio[0]
+                            print(f"[CMD] Using new video with audio: {reencoded_video}")
+                        else:
+                            reencoded_video = new_output
+                    else:
+                        reencoded_video = new_output
+                else:
+                    print(f"[CMD] Could not create direct video - keeping original re-encoded version")
         
         # Verify if output video has audio
         has_output_audio = check_video_has_audio(reencoded_video)
