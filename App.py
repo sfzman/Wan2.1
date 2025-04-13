@@ -25,7 +25,7 @@ from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
-from video_utils import reencode_video_to_16fps, clean_temp_videos
+from video_utils import reencode_video_to_16fps, clean_temp_videos, check_video_has_audio, add_audio_to_video
 
 # Global variables
 loaded_pipeline = None
@@ -139,14 +139,76 @@ def generate_prompt_info(parameters):
     return details
 
 def merge_videos(video_files, output_dir="outputs"):
+    """
+    Merge multiple video files into one, preserving audio if present.
+    """
+    if not video_files:
+        print("[CMD] No video files provided for merging")
+        return None
+        
+    # Check if any input videos have audio
+    has_audio = any(check_video_has_audio(vf) for vf in video_files if os.path.exists(vf))
+    print(f"[CMD] Detected audio in input videos: {has_audio}")
+    
+    # Create a temporary file list for ffmpeg
     filelist_path = os.path.join(tempfile.gettempdir(), "filelist.txt")
     with open(filelist_path, "w", encoding="utf-8") as f:
         for vf in video_files:
-            f.write(f"file '{os.path.abspath(vf)}'\n")
+            if os.path.exists(vf):
+                f.write(f"file '{os.path.abspath(vf)}'\n")
+            else:
+                print(f"[CMD] Warning: file not found for merging: {vf}")
+    
+    # Check if filelist is empty
+    if os.path.getsize(filelist_path) == 0:
+        print("[CMD] No valid files to merge")
+        os.remove(filelist_path)
+        return None
+    
+    # Get output path
     merged_video = get_next_filename(".mp4", output_dir=output_dir)
-    cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_video}"'
-    subprocess.run(cmd, shell=True, check=True)
+    
+    # If audio is present, add proper handling with the map command to ensure all audio streams are preserved
+    if has_audio:
+        cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c:v copy -c:a aac -b:a 192k -map 0:v? -map 0:a? -shortest "{merged_video}"'
+        print(f"[CMD] Merging videos with audio preservation")
+    else:
+        cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_video}"'
+        print(f"[CMD] Merging videos (no audio detected)")
+    
+    # Run the ffmpeg command
+    try:
+        result = subprocess.run(cmd, shell=True, check=True, stderr=subprocess.PIPE)
+        print(f"[CMD] FFmpeg merge command completed successfully")
+    except subprocess.CalledProcessError as e:
+        print(f"[CMD] Error during video merging: {e}")
+        print(f"[CMD] FFmpeg error output: {e.stderr.decode('utf-8', errors='replace') if e.stderr else 'No error output'}")
+        if os.path.exists(filelist_path):
+            os.remove(filelist_path)
+        return None
+    
+    # Clean up the temporary file
     os.remove(filelist_path)
+    
+    # Verify the result
+    if os.path.exists(merged_video) and os.path.getsize(merged_video) > 0:
+        output_has_audio = check_video_has_audio(merged_video)
+        print(f"[CMD] Successfully merged videos to {merged_video}")
+        print(f"[CMD] Output video has audio: {output_has_audio}")
+        
+        # If we expected audio but the merged video doesn't have it, try adding it from the first video with audio
+        if has_audio and not output_has_audio:
+            print(f"[CMD] Audio preservation failed during merge, attempting to add audio manually")
+            audio_source = next((vf for vf in video_files if os.path.exists(vf) and check_video_has_audio(vf)), None)
+            if audio_source:
+                merged_video_with_audio = add_audio_to_video(audio_source, merged_video)
+                if merged_video_with_audio != merged_video:
+                    merged_video = merged_video_with_audio
+                    print(f"[CMD] Added audio to merged video manually: {merged_video}")
+    else:
+        print(f"[CMD] Failed to merge videos or output file is empty")
+        return None
+    
     return merged_video
 
 def copy_to_outputs(video_path):
@@ -374,13 +436,13 @@ def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, hei
         "num_persistent": num_persistent,
         "torch_dtype": torch_dtype,
         "lora_model": lora_model,
-        "lora_alpha": lora_alpha,
+        "lora_alpha": format_alpha(lora_alpha) if lora_model != "None" else "None",
         "lora_model_2": lora_model_2,
-        "lora_alpha_2": lora_alpha_2,
+        "lora_alpha_2": format_alpha(lora_alpha_2) if lora_model_2 != "None" else "None",
         "lora_model_3": lora_model_3,
-        "lora_alpha_3": lora_alpha_3,
+        "lora_alpha_3": format_alpha(lora_alpha_3) if lora_model_3 != "None" else "None",
         "lora_model_4": lora_model_4,
-        "lora_alpha_4": lora_alpha_4,
+        "lora_alpha_4": format_alpha(lora_alpha_4) if lora_model_4 != "None" else "None",
         "clear_cache_after_gen": clear_cache_after_gen,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -1120,11 +1182,47 @@ def generate_videos(
 
     input_was_video = False
     orig_video_path = None
+    # Extract audio once from the original input video
+    temp_audio_file = None
+    
     if input_image is None and input_video is not None:
         input_was_video = True
         orig_video_path = input_video if isinstance(input_video, str) else input_video.name
-        # Don't copy the input video to outputs folder
         log_text += f"[CMD] Using input video: {orig_video_path}\n"
+        
+        # Extract audio from original video once upfront
+        if orig_video_path:
+            from video_utils import check_video_has_audio
+            has_audio = check_video_has_audio(orig_video_path)
+            if has_audio:
+                log_text += f"[CMD] Input video has audio. Extracting audio once for reuse.\n"
+                timestamp = int(time.time())
+                temp_dir = "temp_videos"
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_audio_file = os.path.join(temp_dir, f"temp_audio_{timestamp}.aac")
+                
+                # Extract audio from input video - use higher verbosity to debug
+                extract_cmd = [
+                    'ffmpeg', '-y', 
+                    '-i', orig_video_path,
+                    '-vn',
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-v', 'info',
+                    temp_audio_file
+                ]
+                
+                log_text += f"[CMD] Extracting audio with command: {' '.join(extract_cmd)}\n"
+                result = subprocess.run(' '.join(extract_cmd), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                
+                # Verify the audio file was created successfully
+                if os.path.exists(temp_audio_file) and os.path.getsize(temp_audio_file) > 0:
+                    log_text += f"[CMD] Successfully extracted audio to {temp_audio_file} (size: {os.path.getsize(temp_audio_file)} bytes)\n"
+                else:
+                    log_text += f"[CMD] Failed to extract audio or audio file is empty\n"
+                    temp_audio_file = None
+            else:
+                log_text += f"[CMD] Input video has no audio to extract.\n"
         
         # Note: We'll re-encode the video later after effective_num_frames is defined
 
@@ -1186,12 +1284,21 @@ def generate_videos(
         cap = cv2.VideoCapture(original_video_path)
         if cap.isOpened():
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps_value = cap.get(cv2.CAP_PROP_FPS)
             effective_num_frames = min(int(num_frames), total_frames)
             print(f"[CMD] Detected input video frame count: {total_frames}, using effective frame count: {effective_num_frames}")
+            
+            # Calculate target duration based on num_frames at 16fps
+            target_duration = (effective_num_frames - 1) / 16
+            print(f"[CMD] Target duration for the processed video: {target_duration:.2f} seconds")
             
             # Re-encode the input video to 16 FPS for video-to-video use
             if input_was_video:
                 log_text += f"[CMD] Processing video-to-video with 1.3B model, checking if re-encoding to 16 FPS is needed...\n"
+                
+                # Import here to avoid circular imports
+                from video_utils import reencode_video_to_16fps
+                
                 reencoded_video = reencode_video_to_16fps(orig_video_path, effective_num_frames, target_width=target_width, target_height=target_height)
                 if reencoded_video != orig_video_path:
                     log_text += f"[CMD] Re-encoded input video to 16 FPS: {reencoded_video}\n"
@@ -1380,6 +1487,16 @@ def generate_videos(
 
             save_video(video_data, original_filename, fps=fps, quality=quality)
             log_text += f"[CMD] Saved original video: {original_filename}\n"
+            
+            # Transfer audio from input video if available
+            if input_was_video and orig_video_path:
+                from video_utils import add_audio_to_video
+                # Use our pre-extracted audio file if available
+                original_filename_with_audio, _ = add_audio_to_video(orig_video_path, original_filename, temp_audio_file=temp_audio_file)
+                if original_filename_with_audio != original_filename:
+                    original_filename = original_filename_with_audio
+                    log_text += f"[CMD] Added audio to video: {original_filename}\n"
+            
             if save_prompt:
                 txt_filename = os.path.splitext(original_filename)[0] + ".txt"
                 generation_details = generate_prompt_info({
@@ -1492,6 +1609,15 @@ def generate_videos(
                         break
                     save_video(video_data_ext, extension_filename, fps=fps, quality=quality)
                     log_text += f"[CMD] Saved extension segment {ext_iter}: {extension_filename}\n"
+                    
+                    # For extension videos, we can also transfer audio if it's available
+                    if input_was_video and orig_video_path:
+                        from video_utils import add_audio_to_video
+                        extension_filename_with_audio, _ = add_audio_to_video(orig_video_path, extension_filename, temp_audio_file=temp_audio_file)
+                        if extension_filename_with_audio != extension_filename:
+                            extension_filename = extension_filename_with_audio
+                            log_text += f"[CMD] Added audio to extension video: {extension_filename}\n"
+                    
                     if save_prompt:
                         txt_filename_ext = os.path.splitext(extension_filename)[0] + ".txt"
                         generation_details_ext = generate_prompt_info({
@@ -1561,6 +1687,13 @@ def generate_videos(
                             if not cancel_flag:
                                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
                                 log_text += f"[CMD] Applied Practical-RIFE on original. Saved as: {original_improved}\n"
+                                
+                                # Re-add audio after RIFE processing if the original video had audio
+                                if input_was_video and orig_video_path:
+                                    original_improved_with_audio, _ = add_audio_to_video(original_filename, original_improved, temp_audio_file=temp_audio_file)
+                                    if original_improved_with_audio != original_improved:
+                                        original_improved = original_improved_with_audio
+                                        log_text += f"[CMD] Added audio back after RIFE processing: {original_improved}\n"
                             else:
                                 log_text += "[CMD] Generation cancelled by user during Practical-RIFE processing.\n"
                                 original_improved = original_filename
@@ -1589,6 +1722,13 @@ def generate_videos(
                                 if not cancel_flag:
                                     subprocess.run(cmd, shell=True, check=True, env=os.environ)
                                     log_text += f"[CMD] Applied Practical-RIFE on extension {idx+1}. Saved as: {ext_improved}\n"
+                                    
+                                    # Re-add audio after RIFE processing if the original extension had audio
+                                    ext_improved_with_audio, _ = add_audio_to_video(ext_file, ext_improved, temp_audio_file=temp_audio_file)
+                                    if ext_improved_with_audio != ext_improved:
+                                        ext_improved = ext_improved_with_audio
+                                        log_text += f"[CMD] Added audio back after RIFE processing on extension {idx+1}: {ext_improved}\n"
+                                
                                 else:
                                     log_text += f"[CMD] Generation cancelled by user during Practical-RIFE processing on extension {idx+1}.\n"
                                     ext_improved = ext_file
@@ -1620,6 +1760,17 @@ def generate_videos(
                         subprocess.run(cmd, shell=True, check=True)
                         os.remove(filelist_path)
                         log_text += f"[CMD] Merged unenhanced extended video saved as: {merged_original}\n"
+                        
+                        # Add audio to the merged video if any of the original videos had audio
+                        has_audio = any(check_video_has_audio(vf) for vf in merge_list if os.path.exists(vf))
+                        if has_audio:
+                            # Use the first video with audio as the source
+                            audio_source = next((vf for vf in merge_list if os.path.exists(vf) and check_video_has_audio(vf)), None)
+                            if audio_source:
+                                merged_original_with_audio, _ = add_audio_to_video(audio_source, merged_original, temp_audio_file=temp_audio_file)
+                                if merged_original_with_audio != merged_original:
+                                    merged_original = merged_original_with_audio
+                                    log_text += f"[CMD] Added audio to merged original video: {merged_original}\n"
                     else:
                         if cancel_flag:
                             log_text += "[CMD] Generation cancelled by user before merging original files.\n"
@@ -1645,6 +1796,17 @@ def generate_videos(
                             subprocess.run(cmd, shell=True, check=True)
                             os.remove(filelist_path)
                             log_text += f"[CMD] Merged enhanced extended video saved as: {merged_enhanced}\n"
+                            
+                            # Add audio to the merged enhanced video if any of the improved videos had audio
+                            has_audio = any(check_video_has_audio(vf) for vf in merge_list_improved if os.path.exists(vf))
+                            if has_audio:
+                                # Use the first video with audio as the source
+                                audio_source = next((vf for vf in merge_list_improved if os.path.exists(vf) and check_video_has_audio(vf)), None)
+                                if audio_source:
+                                    merged_enhanced_with_audio, _ = add_audio_to_video(audio_source, merged_enhanced, temp_audio_file=temp_audio_file)
+                                    if merged_enhanced_with_audio != merged_enhanced:
+                                        merged_enhanced = merged_enhanced_with_audio
+                                        log_text += f"[CMD] Added audio to merged enhanced video: {merged_enhanced}\n"
                         else:
                             if cancel_flag:
                                 log_text += "[CMD] Generation cancelled by user before merging enhanced files.\n"
@@ -1758,6 +1920,7 @@ def batch_process_videos(
         if ext_lower == ".mp4":
             image_in = None
             video_in = file_path
+            orig_video_path = file_path  # Save the original video path for audio transfer
             
             # Re-encode the video to 16 FPS only if we're doing video-to-video with the 1.3B model
             # Don't re-encode for image-to-video models that just use the last frame
@@ -1765,6 +1928,10 @@ def batch_process_videos(
                 # Ensure num_frames is valid before re-encoding
                 frames_to_use = int(num_frames)
                 log_text += f"[CMD] Processing video-to-video with 1.3B model for {file}, checking if re-encoding needed...\n"
+                
+                # Import here to avoid circular imports
+                from video_utils import reencode_video_to_16fps
+                
                 reencoded_video = reencode_video_to_16fps(video_in, frames_to_use, target_width=int(width), target_height=int(height))
                 if reencoded_video != video_in:
                     log_text += f"[CMD] Re-encoded input video {file} to 16 FPS: {reencoded_video}\n"
@@ -1778,6 +1945,7 @@ def batch_process_videos(
                 log_text += f"[CMD] Error loading image {file_path}: {e}\n"
                 continue
             video_in = None
+            orig_video_path = None  # No original video for image inputs
         
         if cancel_batch_flag:
             log_text += "[CMD] Batch processing cancelled by user.\n"
@@ -1785,7 +1953,10 @@ def batch_process_videos(
             
         custom_filename = base
 
-        print(f"DEBUG processing {file_path}")
+        print(f"[CMD] Processing batch item: {file_path}")
+        
+        # Use the original video path (if available) as the override_input_file to ensure audio is preserved
+        override_file = orig_video_path if ext_lower == ".mp4" else None
         
         generated_video, single_log, _ = generate_videos(
             prompt_content, tar_lang, negative_prompt, image_in, video_in, denoising_strength, num_generations,
@@ -1795,7 +1966,7 @@ def batch_process_videos(
             enable_teacache, tea_cache_l1_thresh, tea_cache_model_id,
             lora_model, lora_alpha, lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4,
             clear_cache_after_gen, extend_factor,
-            None,
+            override_file,
             output_dir_override=batch_output_folder,
             custom_output_filename=custom_filename
         )
@@ -1983,19 +2154,8 @@ def apply_fast_preset():
 
 def clean_temp_videos():
     """Clean up temporary videos that were created during re-encoding"""
-    temp_dir = "temp_videos"
-    if os.path.exists(temp_dir) and os.path.isdir(temp_dir):
-        try:
-            for file in os.listdir(temp_dir):
-                if file.startswith("reencoded_"):
-                    file_path = os.path.join(temp_dir, file)
-                    try:
-                        os.remove(file_path)
-                        print(f"[CMD] Removed temporary video: {file_path}")
-                    except Exception as e:
-                        print(f"[CMD] Error removing temporary video {file_path}: {e}")
-        except Exception as e:
-            print(f"[CMD] Error cleaning temp videos: {e}")
+    from video_utils import clean_temp_videos as utils_clean_temp_videos
+    utils_clean_temp_videos()
 
 # ------------------------- Main application with Gradio -------------------------
 
@@ -2012,7 +2172,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V62 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V63 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
