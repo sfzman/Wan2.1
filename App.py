@@ -408,6 +408,13 @@ def get_config_list():
     configs = [os.path.splitext(f)[0] for f in files if f.endswith(".json")]
     return sorted(configs)
 
+# Helper function to format LoRA alpha values consistently
+def format_alpha(alpha):
+    try:
+        return str(float(alpha))
+    except Exception:
+        return str(alpha)
+
 def save_config(config_name, model_choice, vram_preset, aspect_ratio, width, height, auto_crop, auto_scale, tiled, inference_steps,
                 pr_rife, pr_rife_multiplier, cfg_scale, sigma_shift, num_persistent, torch_dtype, lora_model, lora_alpha,
                 lora_model_2, lora_alpha_2, lora_model_3, lora_alpha_3, lora_model_4, lora_alpha_4, clear_cache_after_gen,
@@ -1323,13 +1330,6 @@ def generate_videos(
     if lora_model_4 and lora_model_4 != "None":
         effective_loras.append((os.path.join("LoRAs", lora_model_4), lora_alpha_4))
         
-    # Define a helper to format LoRA alpha values consistently
-    def format_alpha(alpha):
-        try:
-            return str(float(alpha))
-        except Exception:
-            return str(alpha)
-    
     new_config = {
          "model_choice": model_choice,
          "torch_dtype": torch_dtype,
@@ -2172,7 +2172,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V64 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V65 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
