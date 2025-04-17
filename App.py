@@ -10,6 +10,9 @@ import gc
 import re
 import shutil
 import platform
+import numpy as np
+import glob
+from datetime import datetime
 
 import psutil
 DEFAULT_CLEAR_CACHE = True if psutil.virtual_memory().total < 31 * 1024**3 else False
@@ -26,6 +29,63 @@ from wan.utils.utils import cache_video
 from diffsynth import ModelManager, WanVideoPipeline, save_video, VideoData
 from modelscope import snapshot_download, dataset_snapshot_download
 from video_utils import reencode_video_to_16fps, clean_temp_videos, check_video_has_audio, add_audio_to_video
+from filelock import FileLock
+
+# Add cleanup of stale temporary reservation files
+def cleanup_temp_reservation_files():
+    """Clean up any stale temporary reservation files that might have been left by crashed instances"""
+    try:
+        temp_dir = "outputs"
+        if os.path.exists(temp_dir):
+            for tmp_file in glob.glob(os.path.join(temp_dir, "*.tmp")):
+                # Check if the file is older than 1 hour - it's likely stale
+                file_age = time.time() - os.path.getmtime(tmp_file)
+                if file_age > 3600:  # 1 hour in seconds
+                    try:
+                        os.remove(tmp_file)
+                        print(f"[CMD] Removed stale temporary file: {tmp_file}")
+                    except Exception as e:
+                        print(f"[CMD] Failed to remove stale temporary file {tmp_file}: {e}")
+    except Exception as e:
+        print(f"[CMD] Error during cleanup of temporary reservation files: {e}")
+
+# Wrapper for save_video that handles temporary reservation files
+def safe_save_video(video_data, filename, fps=16, quality=90):
+    """
+    Wrapper for save_video that ensures proper cleanup of temporary reservation files.
+    Also provides atomic file operations to prevent race conditions between instances.
+    
+    The filename can be either a string (legacy mode) or a tuple of (filename, temp_filename)
+    from the get_next_filename function.
+    """
+    try:
+        # Handle both string and tuple inputs for backward compatibility
+        actual_filename = filename
+        temp_file = None
+        
+        if isinstance(filename, tuple):
+            actual_filename, temp_file = filename
+        else:
+            # Legacy mode - assume the temp file follows the .tmp convention
+            temp_file = filename + ".tmp"
+        
+        # Save the video
+        save_video(video_data, actual_filename, fps=fps, quality=quality)
+        
+        # Clean up the temporary reservation file if it exists
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception as e:
+                print(f"[CMD] Warning: Failed to remove temporary file {temp_file}: {e}")
+        
+        return True, actual_filename
+    except Exception as e:
+        print(f"[CMD] Error saving video {actual_filename if 'actual_filename' in locals() else filename}: {e}")
+        return False, None
+
+# Call cleanup on startup
+cleanup_temp_reservation_files()
 
 # Global variables
 loaded_pipeline = None
@@ -165,8 +225,8 @@ def merge_videos(video_files, output_dir="outputs"):
         os.remove(filelist_path)
         return None
     
-    # Get output path
-    merged_video = get_next_filename(".mp4", output_dir=output_dir)
+    # Get output path using atomic file naming
+    merged_video_path, temp_file = get_next_filename(".mp4", output_dir=output_dir)
     
     # If audio is present, add proper handling with the map command to ensure all audio streams are preserved
     if has_audio:
@@ -1137,15 +1197,29 @@ def show_extension_info():
 
 def get_next_generation_number(output_folder):
     import re
-    max_num = 0
-    if os.path.exists(output_folder):
-        for f in os.listdir(output_folder):
-            m = re.match(r'^(\d{4})\.mp4$', f)
-            if m:
-                num = int(m.group(1))
-                if num > max_num:
-                    max_num = num
-    return max_num + 1
+    import tempfile
+    import os
+    import time
+    import random
+    from filelock import FileLock
+    
+    # Create a lock file in a temporary directory to ensure atomic operations
+    lock_file = os.path.join(tempfile.gettempdir(), "wan21_generation_lock.lock")
+    lock = FileLock(lock_file, timeout=10)  # 10 seconds timeout
+    
+    with lock:
+        max_num = 0
+        if os.path.exists(output_folder):
+            for f in os.listdir(output_folder):
+                m = re.match(r'^(\d{4})\.mp4$', f)
+                if m:
+                    num = int(m.group(1))
+                    if num > max_num:
+                        max_num = num
+        
+        # Add a small random delay to further reduce collision chance
+        time.sleep(random.uniform(0.01, 0.05))
+        return max_num + 1
 
 def generate_videos(
     prompt, tar_lang, negative_prompt, input_image, input_video, denoising_strength, num_generations,
@@ -1427,7 +1501,8 @@ def generate_videos(
                 common_args["tea_cache_l1_thresh"] = None
                 common_args["tea_cache_model_id"] = ""
             
-            original_filename = os.path.join(output_folder, f"{base_name}.mp4")
+            # Get the original filename with atomic file generation
+            original_filename, original_temp_file = get_next_filename("mp4", output_dir=output_folder)
             video_start_time = time.time()
 
             if model_choice == "1.3B":
@@ -1485,7 +1560,8 @@ def generate_videos(
             video_duration = time.time() - video_start_time
             log_text += f"[CMD] Original video generation duration: {video_duration:.2f} seconds\n"
 
-            save_video(video_data, original_filename, fps=fps, quality=quality)
+            # Send both the filename and the temp file for proper cleanup
+            success, _ = safe_save_video(video_data, (original_filename, original_temp_file), fps=fps, quality=quality)
             log_text += f"[CMD] Saved original video: {original_filename}\n"
             
             # Transfer audio from input video if available
@@ -1590,7 +1666,8 @@ def generate_videos(
                     common_args_ext["tea_cache_l1_thresh"] = None
                     common_args_ext["tea_cache_model_id"] = ""
                     
-                extension_filename = os.path.join(output_folder, f"{base_name}_ext{ext_iter}.mp4")
+                # Get extension filename with atomic file generation
+                extension_filename, extension_temp_file = get_next_filename("mp4", output_dir=output_folder)
                 log_text += f"[CMD] Generating extension segment {ext_iter} using model {extension_model_choice if int(extend_factor)>1 else model_choice}\n"
                 try:
                     ext_start_time = time.time()
@@ -1607,7 +1684,7 @@ def generate_videos(
                     if not video_data_ext:
                         log_text += "[CMD] Extension generation returned no data.\n"
                         break
-                    save_video(video_data_ext, extension_filename, fps=fps, quality=quality)
+                    safe_save_video(video_data_ext, (extension_filename, extension_temp_file), fps=fps, quality=quality)
                     log_text += f"[CMD] Saved extension segment {ext_iter}: {extension_filename}\n"
                     
                     # For extension videos, we can also transfer audio if it's available
@@ -1888,7 +1965,7 @@ def batch_process_videos(
             log_text += f"[CMD] Error creating output folder {batch_output_folder}: {e}\n"
             return log_text
     files = os.listdir(folder_path)
-    allowed_exts = [".jpg", ".png", ".jpeg", ".mp4"]
+    allowed_exts = [".jpg", ".png", ".jpeg", ".mp4", ".webp"]
     files = [f for f in files if os.path.splitext(f)[1].lower() in allowed_exts]
     total_files = len(files)
     log_text += f"[CMD] Found {total_files} files in folder {folder_path}\n"
@@ -1990,15 +2067,42 @@ def cancel_batch_process():
     return "Cancelling batch process...", "Cancelling any active generation..."
 
 def get_next_filename(extension, output_dir="outputs"):
-    """Get next available filename in sequence."""
+    """
+    Get next available filename in sequence using atomic file operations.
+    Uses file locking to prevent race conditions between multiple app instances.
+    
+    Returns a tuple of (filename, temp_filename) where temp_filename is the temporary
+    reservation file that should be cleaned up after the real file is created.
+    """
+    import tempfile
+    import os
+    import time
+    import random
+    from filelock import FileLock
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    counter = 1
-    while True:
-        filename = os.path.join(output_dir, f"generation_{counter:04d}.{extension}")
-        if not os.path.exists(filename):
-            return filename
-        counter += 1
+    # Create a lock file in a temporary directory
+    lock_file = os.path.join(tempfile.gettempdir(), "wan21_filename_lock.lock")
+    lock = FileLock(lock_file, timeout=10)  # 10 seconds timeout
+    
+    with lock:
+        counter = 1
+        while True:
+            filename = os.path.join(output_dir, f"{counter:04d}.{extension}")
+            temp_filename = filename + ".tmp"
+            
+            # Check if either the actual file or temp reservation exists
+            if not os.path.exists(filename) and not os.path.exists(temp_filename):
+                # Create an empty file to "reserve" this filename
+                with open(temp_filename, "w") as f:
+                    # Add timestamp and instance info for debugging
+                    f.write(f"Reserved by process {os.getpid()} at {datetime.now().isoformat()}")
+                
+                # Add a small random delay to further reduce collision chance
+                time.sleep(random.uniform(0.01, 0.05))
+                return filename, temp_filename
+            counter += 1
 
 def open_outputs_folder():
     # Determine the outputs folder path based on the current platform
@@ -2172,7 +2276,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V65 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V66 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
