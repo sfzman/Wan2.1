@@ -73,15 +73,14 @@ def safe_save_video(video_data, filename, fps=16, quality=90):
         save_video(video_data, actual_filename, fps=fps, quality=quality)
         
         # Clean up the temporary reservation file if it exists
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except Exception as e:
-                print(f"[CMD] Warning: Failed to remove temporary file {temp_file}: {e}")
+        remove_temp_file(temp_file)
         
         return True, actual_filename
     except Exception as e:
         print(f"[CMD] Error saving video {actual_filename if 'actual_filename' in locals() else filename}: {e}")
+        # Clean up temp file on error as well
+        if 'temp_file' in locals() and temp_file:
+            remove_temp_file(temp_file)
         return False, None
 
 # Call cleanup on startup
@@ -198,6 +197,16 @@ def generate_prompt_info(parameters):
     
     return details
 
+def remove_temp_file(temp_file):
+    """Safely remove a temporary file if it exists"""
+    if temp_file and os.path.exists(temp_file):
+        try:
+            os.remove(temp_file)
+            print(f"[CMD] Removed temporary file: {temp_file}")
+        except Exception as e:
+            print(f"[CMD] Failed to remove temporary file {temp_file}: {e}")
+
+# Modify the merge_videos function to use the remove_temp_file function
 def merge_videos(video_files, output_dir="outputs"):
     """
     Merge multiple video files into one, preserving audio if present.
@@ -230,19 +239,22 @@ def merge_videos(video_files, output_dir="outputs"):
     
     # If audio is present, add proper handling with the map command to ensure all audio streams are preserved
     if has_audio:
-        cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c:v copy -c:a aac -b:a 192k -map 0:v? -map 0:a? -shortest "{merged_video}"'
+        cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c:v copy -c:a aac -b:a 192k -map 0:v? -map 0:a? -shortest "{merged_video_path}"'
         print(f"[CMD] Merging videos with audio preservation")
     else:
-        cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_video}"'
+        cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_video_path}"'
         print(f"[CMD] Merging videos (no audio detected)")
     
     # Run the ffmpeg command
     try:
         result = subprocess.run(cmd, shell=True, check=True, stderr=subprocess.PIPE)
         print(f"[CMD] FFmpeg merge command completed successfully")
+        # Clean up temp file after successful generation
+        remove_temp_file(temp_file)
     except subprocess.CalledProcessError as e:
         print(f"[CMD] Error during video merging: {e}")
         print(f"[CMD] FFmpeg error output: {e.stderr.decode('utf-8', errors='replace') if e.stderr else 'No error output'}")
+        remove_temp_file(temp_file)  # Also clean up on error
         if os.path.exists(filelist_path):
             os.remove(filelist_path)
         return None
@@ -251,9 +263,9 @@ def merge_videos(video_files, output_dir="outputs"):
     os.remove(filelist_path)
     
     # Verify the result
-    if os.path.exists(merged_video) and os.path.getsize(merged_video) > 0:
-        output_has_audio = check_video_has_audio(merged_video)
-        print(f"[CMD] Successfully merged videos to {merged_video}")
+    if os.path.exists(merged_video_path) and os.path.getsize(merged_video_path) > 0:
+        output_has_audio = check_video_has_audio(merged_video_path)
+        print(f"[CMD] Successfully merged videos to {merged_video_path}")
         print(f"[CMD] Output video has audio: {output_has_audio}")
         
         # If we expected audio but the merged video doesn't have it, try adding it from the first video with audio
@@ -261,15 +273,15 @@ def merge_videos(video_files, output_dir="outputs"):
             print(f"[CMD] Audio preservation failed during merge, attempting to add audio manually")
             audio_source = next((vf for vf in video_files if os.path.exists(vf) and check_video_has_audio(vf)), None)
             if audio_source:
-                merged_video_with_audio = add_audio_to_video(audio_source, merged_video)
-                if merged_video_with_audio != merged_video:
-                    merged_video = merged_video_with_audio
-                    print(f"[CMD] Added audio to merged video manually: {merged_video}")
+                merged_video_with_audio = add_audio_to_video(audio_source, merged_video_path)
+                if merged_video_with_audio != merged_video_path:
+                    merged_video_path = merged_video_with_audio
+                    print(f"[CMD] Added audio to merged video manually: {merged_video_path}")
     else:
         print(f"[CMD] Failed to merge videos or output file is empty")
         return None
     
-    return merged_video
+    return merged_video_path
 
 def copy_to_outputs(video_path):
     """
@@ -1502,7 +1514,8 @@ def generate_videos(
                 common_args["tea_cache_model_id"] = ""
             
             # Get the original filename with atomic file generation
-            original_filename, original_temp_file = get_next_filename("mp4", output_dir=output_folder)
+            original_filename, original_temp_file = get_next_filename("mp4", output_dir=output_folder, 
+                                                                     custom_filename=base_name if custom_output_filename else None)
             video_start_time = time.time()
 
             if model_choice == "1.3B":
@@ -1549,6 +1562,8 @@ def generate_videos(
                 )
             else:
                 err_msg = "[CMD] Invalid combination of inputs."
+                # Clean up any temporary file before exiting with error
+                remove_temp_file(original_temp_file)
                 if clear_cache_after_gen:
                     loaded_pipeline = None
                     loaded_pipeline_config = {}
@@ -1562,6 +1577,11 @@ def generate_videos(
 
             # Send both the filename and the temp file for proper cleanup
             success, _ = safe_save_video(video_data, (original_filename, original_temp_file), fps=fps, quality=quality)
+            if not success:
+                # Make sure temp file is gone if save failed
+                remove_temp_file(original_temp_file)
+                return None, log_text + "[CMD] Failed to save video.", str(last_used_seed or "")
+                
             log_text += f"[CMD] Saved original video: {original_filename}\n"
             
             # Transfer audio from input video if available
@@ -1667,7 +1687,9 @@ def generate_videos(
                     common_args_ext["tea_cache_model_id"] = ""
                     
                 # Get extension filename with atomic file generation
-                extension_filename, extension_temp_file = get_next_filename("mp4", output_dir=output_folder)
+                ext_file_prefix = f"{base_name}_ext{ext_iter}"
+                extension_filename, extension_temp_file = get_next_filename("mp4", output_dir=output_folder, 
+                                                                         custom_filename=ext_file_prefix if custom_output_filename else None)
                 log_text += f"[CMD] Generating extension segment {ext_iter} using model {extension_model_choice if int(extend_factor)>1 else model_choice}\n"
                 try:
                     ext_start_time = time.time()
@@ -1683,8 +1705,15 @@ def generate_videos(
                     
                     if not video_data_ext:
                         log_text += "[CMD] Extension generation returned no data.\n"
+                        # Clean up temp file if generation failed
+                        remove_temp_file(extension_temp_file)
                         break
-                    safe_save_video(video_data_ext, (extension_filename, extension_temp_file), fps=fps, quality=quality)
+                    success, _ = safe_save_video(video_data_ext, (extension_filename, extension_temp_file), fps=fps, quality=quality)
+                    if not success:
+                        # Make sure temp file is gone if save failed
+                        remove_temp_file(extension_temp_file)
+                        log_text += f"[CMD] Failed to save extension segment {ext_iter}.\n"
+                        break
                     log_text += f"[CMD] Saved extension segment {ext_iter}: {extension_filename}\n"
                     
                     # For extension videos, we can also transfer audio if it's available
@@ -1752,7 +1781,8 @@ def generate_videos(
                 if cancel_flag:
                     log_text += "[CMD] Generation cancelled by user before Practical-RIFE processing.\n"
                 else:
-                    original_improved = os.path.join(output_folder, f"{base_name}_improved.mp4")
+                    original_improved_name = f"{base_name}_improved" if custom_output_filename else None
+                    original_improved, original_improved_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=original_improved_name)
                     try:
                         cap = cv2.VideoCapture(original_filename)
                         source_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -1764,6 +1794,8 @@ def generate_videos(
                             if not cancel_flag:
                                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
                                 log_text += f"[CMD] Applied Practical-RIFE on original. Saved as: {original_improved}\n"
+                                # Clean up temp file after successful RIFE processing
+                                remove_temp_file(original_improved_temp)
                                 
                                 # Re-add audio after RIFE processing if the original video had audio
                                 if input_was_video and orig_video_path:
@@ -1774,12 +1806,18 @@ def generate_videos(
                             else:
                                 log_text += "[CMD] Generation cancelled by user during Practical-RIFE processing.\n"
                                 original_improved = original_filename
+                                # Clean up temp file if cancelled
+                                remove_temp_file(original_improved_temp)
                         else:
                             original_improved = original_filename
                             log_text += f"[CMD] Skipped Practical-RIFE on original because source FPS ({source_fps:.2f}) is above threshold.\n"
+                            # Clean up unused temp file
+                            remove_temp_file(original_improved_temp)
                     except Exception as e:
                         log_text += f"[CMD] Error applying Practical-RIFE on original: {str(e)}\n"
                         original_improved = original_filename
+                        # Clean up temp file on error
+                        remove_temp_file(original_improved_temp)
                     
                     for idx, ext_file in enumerate(ext_segments):
                         if cancel_flag:
@@ -1787,7 +1825,8 @@ def generate_videos(
                             ext_segments_improved.append(ext_file)
                             continue
                             
-                        ext_improved = os.path.join(output_folder, f"{base_name}_ext{idx+1}_improved.mp4")
+                        ext_improved_name = f"{base_name}_ext{idx+1}_improved" if custom_output_filename else None
+                        ext_improved, ext_improved_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=ext_improved_name)
                         try:
                             cap = cv2.VideoCapture(ext_file)
                             source_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -1799,6 +1838,8 @@ def generate_videos(
                                 if not cancel_flag:
                                     subprocess.run(cmd, shell=True, check=True, env=os.environ)
                                     log_text += f"[CMD] Applied Practical-RIFE on extension {idx+1}. Saved as: {ext_improved}\n"
+                                    # Clean up temp file after successful RIFE processing
+                                    remove_temp_file(ext_improved_temp)
                                     
                                     # Re-add audio after RIFE processing if the original extension had audio
                                     ext_improved_with_audio, _ = add_audio_to_video(ext_file, ext_improved, temp_audio_file=temp_audio_file)
@@ -1809,12 +1850,18 @@ def generate_videos(
                                 else:
                                     log_text += f"[CMD] Generation cancelled by user during Practical-RIFE processing on extension {idx+1}.\n"
                                     ext_improved = ext_file
+                                    # Clean up temp file if cancelled
+                                    remove_temp_file(ext_improved_temp)
                             else:
                                 ext_improved = ext_file
                                 log_text += f"[CMD] Skipped Practical-RIFE on extension {idx+1} due to high FPS.\n"
+                                # Clean up unused temp file
+                                remove_temp_file(ext_improved_temp)
                         except Exception as e:
                             log_text += f"[CMD] Error applying Practical-RIFE on extension {idx+1}: {str(e)}\n"
                             ext_improved = ext_file
+                            # Clean up temp file on error
+                            remove_temp_file(ext_improved_temp)
                         ext_segments_improved.append(ext_improved)
             else:
                 original_improved = original_filename
@@ -1824,7 +1871,8 @@ def generate_videos(
             if ext_segments and not cancel_flag:
                 try:
                     merge_list = [original_filename] + ext_segments
-                    merged_original = os.path.join(output_folder, f"{base_name}_extended_original.mp4")
+                    merged_original_name = f"{base_name}_extended_original" if custom_output_filename else None
+                    merged_original, merged_original_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=merged_original_name)
                     filelist_path = os.path.join(tempfile.gettempdir(), "filelist_original.txt")
                     with open(filelist_path, "w", encoding="utf-8") as f:
                         for vf in merge_list:
@@ -1835,6 +1883,8 @@ def generate_videos(
                     if os.path.getsize(filelist_path) > 0 and not cancel_flag:
                         cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_original}"'
                         subprocess.run(cmd, shell=True, check=True)
+                        # Clean up temp file after successful merge
+                        remove_temp_file(merged_original_temp)
                         os.remove(filelist_path)
                         log_text += f"[CMD] Merged unenhanced extended video saved as: {merged_original}\n"
                         
@@ -1854,13 +1904,18 @@ def generate_videos(
                         else:
                             log_text += f"[CMD] No valid files to merge for extended original.\n"
                         os.remove(filelist_path)
+                        # Clean up temp file if not used for merge
+                        remove_temp_file(merged_original_temp)
                 except Exception as e:
                     log_text += f"[CMD] Error merging original extensions: {str(e)}\n"
+                    # Clean up temp file on error
+                    remove_temp_file(merged_original_temp)
                 if pr_rife_enabled and ext_segments_improved and not cancel_flag:
                     try:
                         merge_list_improved = [original_improved] + ext_segments_improved
                         suffix = "_extended_original_enhanced" if len(ext_segments_improved) > 1 else "_extended_enhanced"
-                        merged_enhanced = os.path.join(output_folder, f"{base_name}{suffix}.mp4")
+                        merged_enhanced_name = f"{base_name}{suffix}" if custom_output_filename else None
+                        merged_enhanced, merged_enhanced_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=merged_enhanced_name)
                         filelist_path = os.path.join(tempfile.gettempdir(), "filelist_enhanced.txt")
                         with open(filelist_path, "w", encoding="utf-8") as f:
                             for vf in merge_list_improved:
@@ -1871,6 +1926,8 @@ def generate_videos(
                         if os.path.getsize(filelist_path) > 0 and not cancel_flag:
                             cmd = f'ffmpeg -f concat -safe 0 -i "{filelist_path}" -c copy "{merged_enhanced}"'
                             subprocess.run(cmd, shell=True, check=True)
+                            # Clean up temp file after successful merge
+                            remove_temp_file(merged_enhanced_temp)
                             os.remove(filelist_path)
                             log_text += f"[CMD] Merged enhanced extended video saved as: {merged_enhanced}\n"
                             
@@ -1890,8 +1947,12 @@ def generate_videos(
                             else:
                                 log_text += f"[CMD] No valid files to merge for extended enhanced video.\n"
                             os.remove(filelist_path)
+                            # Clean up temp file if not used for merge
+                            remove_temp_file(merged_enhanced_temp)
                     except Exception as e:
                         log_text += f"[CMD] Error merging enhanced extensions: {str(e)}\n"
+                        # Clean up temp file on error
+                        remove_temp_file(merged_enhanced_temp)
 
             if pr_rife_enabled and merged_enhanced and os.path.exists(merged_enhanced):
                 final_output_video = merged_enhanced
@@ -2057,6 +2118,8 @@ def batch_process_videos(
             
     # Clean up temporary re-encoded videos
     clean_temp_videos()
+    # Clean up any remaining temporary files in batch output folder
+    cleanup_tmp_files(batch_output_folder)
     return log_text
 
 def cancel_batch_process():
@@ -2066,10 +2129,12 @@ def cancel_batch_process():
     print("[CMD] Batch process cancel button pressed.")
     return "Cancelling batch process...", "Cancelling any active generation..."
 
-def get_next_filename(extension, output_dir="outputs"):
+def get_next_filename(extension, output_dir="outputs", custom_filename=None):
     """
     Get next available filename in sequence using atomic file operations.
     Uses file locking to prevent race conditions between multiple app instances.
+    
+    If custom_filename is provided, it will attempt to use that name instead of a sequential number.
     
     Returns a tuple of (filename, temp_filename) where temp_filename is the temporary
     reservation file that should be cleaned up after the real file is created.
@@ -2087,6 +2152,38 @@ def get_next_filename(extension, output_dir="outputs"):
     lock = FileLock(lock_file, timeout=10)  # 10 seconds timeout
     
     with lock:
+        # If custom filename is provided, try to use it
+        if custom_filename:
+            base_filename = os.path.join(output_dir, f"{custom_filename}.{extension}")
+            temp_filename = base_filename + ".tmp"
+            
+            # Check if the file already exists
+            if not os.path.exists(base_filename) and not os.path.exists(temp_filename):
+                # Create an empty file to "reserve" this filename
+                with open(temp_filename, "w") as f:
+                    # Add timestamp and instance info for debugging
+                    f.write(f"Reserved by process {os.getpid()} at {datetime.now().isoformat()}")
+                
+                # Add a small random delay to further reduce collision chance
+                time.sleep(random.uniform(0.01, 0.05))
+                return base_filename, temp_filename
+            
+            # If the file exists and we have multiple generations or extensions,
+            # add a counter to make it unique
+            counter = 1
+            while True:
+                unique_filename = os.path.join(output_dir, f"{custom_filename}_{counter}.{extension}")
+                temp_filename = unique_filename + ".tmp"
+                
+                if not os.path.exists(unique_filename) and not os.path.exists(temp_filename):
+                    with open(temp_filename, "w") as f:
+                        f.write(f"Reserved by process {os.getpid()} at {datetime.now().isoformat()}")
+                    
+                    time.sleep(random.uniform(0.01, 0.05))
+                    return unique_filename, temp_filename
+                counter += 1
+        
+        # Default behavior (no custom filename) - sequential numbers
         counter = 1
         while True:
             filename = os.path.join(output_dir, f"{counter:04d}.{extension}")
@@ -2256,10 +2353,33 @@ def refresh_lora_list():
 def apply_fast_preset():
     return 20, True, 0.15, 5.6
 
+def cleanup_tmp_files(directory=None):
+    """Clean up any remaining temporary .tmp files in the specified directory or the default outputs folder"""
+    import glob
+    
+    if directory is None:
+        directory = "outputs"
+    
+    if not os.path.exists(directory):
+        return
+        
+    try:
+        tmp_files = glob.glob(os.path.join(directory, "*.tmp"))
+        for tmp_file in tmp_files:
+            try:
+                os.remove(tmp_file)
+                print(f"[CMD] Cleaned up temporary file: {tmp_file}")
+            except Exception as e:
+                print(f"[CMD] Failed to remove temporary file {tmp_file}: {e}")
+    except Exception as e:
+        print(f"[CMD] Error cleaning up temporary files: {e}")
+
 def clean_temp_videos():
     """Clean up temporary videos that were created during re-encoding"""
     from video_utils import clean_temp_videos as utils_clean_temp_videos
     utils_clean_temp_videos()
+    # Also clean up any remaining .tmp files
+    cleanup_tmp_files()
 
 # ------------------------- Main application with Gradio -------------------------
 
@@ -2276,7 +2396,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V66 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V67 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
