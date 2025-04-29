@@ -1787,7 +1787,7 @@ def generate_videos(
                         cap = cv2.VideoCapture(original_filename)
                         source_fps = cap.get(cv2.CAP_PROP_FPS)
                         cap.release()
-                        if source_fps <= 29:
+                        if source_fps <= 125:
                             print(f"[CMD] Applying Practical-RIFE on original {original_filename}")
                             multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
                             cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{original_filename}" --output="{original_improved}"'
