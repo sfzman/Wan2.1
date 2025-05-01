@@ -10,6 +10,7 @@ import gc
 import re
 import shutil
 import platform
+import functools
 import numpy as np
 import glob
 from datetime import datetime
@@ -31,11 +32,13 @@ from modelscope import snapshot_download, dataset_snapshot_download
 from video_utils import reencode_video_to_16fps, clean_temp_videos, check_video_has_audio, add_audio_to_video
 from filelock import FileLock
 
+DEFAULT_OUTPUT_DIR="outputs"
+
 # Add cleanup of stale temporary reservation files
 def cleanup_temp_reservation_files():
     """Clean up any stale temporary reservation files that might have been left by crashed instances"""
     try:
-        temp_dir = "outputs"
+        temp_dir = DEFAULT_OUTPUT_DIR
         if os.path.exists(temp_dir):
             for tmp_file in glob.glob(os.path.join(temp_dir, "*.tmp")):
                 # Check if the file is older than 1 hour - it's likely stale
@@ -207,7 +210,7 @@ def remove_temp_file(temp_file):
             print(f"[CMD] Failed to remove temporary file {temp_file}: {e}")
 
 # Modify the merge_videos function to use the remove_temp_file function
-def merge_videos(video_files, output_dir="outputs"):
+def merge_videos(video_files, output_dir=DEFAULT_OUTPUT_DIR):
     """
     Merge multiple video files into one, preserving audio if present.
     """
@@ -290,7 +293,7 @@ def copy_to_outputs(video_path):
     
     Kept for backward compatibility with older code or plugins.
     """
-    outputs_dir = "outputs"
+    outputs_dir = DEFAULT_OUTPUT_DIR
     if not os.path.exists(outputs_dir):
         os.makedirs(outputs_dir)
     base = os.path.basename(video_path)
@@ -1246,12 +1249,14 @@ def generate_videos(
     lora_model_4, lora_alpha_4,
     clear_cache_after_gen, extend_factor,
     override_input_file=None,
-    output_dir_override="outputs",
+    output_dir_override=DEFAULT_OUTPUT_DIR,
     custom_output_filename=None
 ):
     global loaded_pipeline, loaded_pipeline_config, cancel_flag, prompt_expander
 
     output_folder = output_dir_override
+    print(f"[DEBUG] Inside generate_videos: output_folder immediately after assignment = {output_folder}") # Add this line again
+
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
         
@@ -1781,15 +1786,21 @@ def generate_videos(
                 if cancel_flag:
                     log_text += "[CMD] Generation cancelled by user before Practical-RIFE processing.\n"
                 else:
-                    original_improved_name = f"{base_name}_improved" if custom_output_filename else None
+                    # Determine RIFE suffix before getting the filename
+                    multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                    rife_suffix = f"_{multiplier_val}xFPS"
+                    
+                    # Use base_name and the RIFE suffix for the improved filename
+                    original_improved_name = f"{base_name}{rife_suffix}"
                     original_improved, original_improved_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=original_improved_name)
+                    
                     try:
                         cap = cv2.VideoCapture(original_filename)
                         source_fps = cap.get(cv2.CAP_PROP_FPS)
                         cap.release()
                         if source_fps <= 125:
                             print(f"[CMD] Applying Practical-RIFE on original {original_filename}")
-                            multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                            # Multiplier already determined above
                             cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{original_filename}" --output="{original_improved}"'
                             if not cancel_flag:
                                 subprocess.run(cmd, shell=True, check=True, env=os.environ)
@@ -1833,7 +1844,7 @@ def generate_videos(
                             cap.release()
                             if source_fps <= 29:
                                 print(f"[CMD] Applying Practical-RIFE on extension {ext_file}")
-                                multiplier_val = "2" if pr_rife_radio == "2x FPS" else "4"
+                                # Multiplier already determined above
                                 cmd = f'"{sys.executable}" "Practical-RIFE/inference_video.py" --model="{os.path.abspath(os.path.join("Practical-RIFE", "train_log"))}" --multi={multiplier_val} --video="{ext_file}" --output="{ext_improved}"'
                                 if not cancel_flag:
                                     subprocess.run(cmd, shell=True, check=True, env=os.environ)
@@ -2129,7 +2140,7 @@ def cancel_batch_process():
     print("[CMD] Batch process cancel button pressed.")
     return "Cancelling batch process...", "Cancelling any active generation..."
 
-def get_next_filename(extension, output_dir="outputs", custom_filename=None):
+def get_next_filename(extension, output_dir=DEFAULT_OUTPUT_DIR, custom_filename=None):
     """
     Get next available filename in sequence using atomic file operations.
     Uses file locking to prevent race conditions between multiple app instances.
@@ -2145,6 +2156,8 @@ def get_next_filename(extension, output_dir="outputs", custom_filename=None):
     import random
     from filelock import FileLock
     
+    print(f"[DEBUG] Inside get_next_filename: received output_dir = {output_dir}") # Add at the start
+
     os.makedirs(output_dir, exist_ok=True)
     
     # Create a lock file in a temporary directory
@@ -2166,6 +2179,7 @@ def get_next_filename(extension, output_dir="outputs", custom_filename=None):
                 
                 # Add a small random delay to further reduce collision chance
                 time.sleep(random.uniform(0.01, 0.05))
+                print(f"[DEBUG] Inside get_next_filename: returning filename = {base_filename}") # Add before return
                 return base_filename, temp_filename
             
             # If the file exists and we have multiple generations or extensions,
@@ -2203,7 +2217,7 @@ def get_next_filename(extension, output_dir="outputs", custom_filename=None):
 
 def open_outputs_folder():
     # Determine the outputs folder path based on the current platform
-    outputs_path = os.path.abspath("outputs")
+    outputs_path = os.path.abspath(DEFAULT_OUTPUT_DIR)
     try:
         if platform.system() == "Windows":
             os.startfile(outputs_path)
@@ -2358,7 +2372,7 @@ def cleanup_tmp_files(directory=None):
     import glob
     
     if directory is None:
-        directory = "outputs"
+        directory = DEFAULT_OUTPUT_DIR
     
     if not os.path.exists(directory):
         return
@@ -2381,7 +2395,26 @@ def clean_temp_videos():
     # Also clean up any remaining .tmp files
     cleanup_tmp_files()
 
-# ------------------------- Main application with Gradio -------------------------
+# --- Utility Functions (No changes needed) ---
+def get_available_drives():
+    """Detect available drives on the system regardless of OS"""
+    available_paths = []
+    if platform.system() == "Windows":
+        import string
+        from ctypes import windll
+        drives = []
+        bitmask = windll.kernel32.GetLogicalDrives()
+        for letter in string.ascii_uppercase:
+            if bitmask & 1: drives.append(f"{letter}:\\")
+            bitmask >>= 1
+        available_paths = drives
+    elif platform.system() == "Darwin":
+         available_paths = ["/", "/Volumes"]
+    else:
+        available_paths = ["/", "/mnt", "/media"]
+    existing_paths = [p for p in available_paths if os.path.exists(p)]
+    print(f"Allowed Gradio paths: {existing_paths}")
+    return existing_paths
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -2389,14 +2422,32 @@ if __name__ == "__main__":
                         help="The prompt extend method to use.")
     parser.add_argument("--prompt_extend_model", type=str, default=None, help="The prompt extend model to use.")
     parser.add_argument("--share", action="store_true", help="Share the Gradio app publicly.")
+    parser.add_argument("--outputs", type=str, default=None, help="Specify the default output directory (e.g., --outputs \"C:\My Videos\" or --outputs \"/home/user/videos\").") # New argument
     args = parser.parse_args()
+    
+    # Update default output directory if provided via CLI
+    if args.outputs:
+        try:
+            new_output_dir = os.path.abspath(args.outputs)
+            if not os.path.exists(new_output_dir):
+                os.makedirs(new_output_dir)
+                print(f"[CMD] Created specified output directory: {new_output_dir}")
+            DEFAULT_OUTPUT_DIR = new_output_dir
+            print(f"[CMD] Using custom default output directory: {DEFAULT_OUTPUT_DIR}")
+        except Exception as e:
+            print(f"[CMD] Error setting custom output directory '{args.outputs}': {e}. Using default: {DEFAULT_OUTPUT_DIR}")
+    print(f"[DEBUG] Initial DEFAULT_OUTPUT_DIR after arg parsing: {DEFAULT_OUTPUT_DIR}") # Add this line
+
+    # Create a partial function with the correct output path baked in
+    generate_videos_with_path = functools.partial(generate_videos, output_dir_override=DEFAULT_OUTPUT_DIR)
+
     loaded_pipeline = None
     loaded_pipeline_config = {}
     cancel_flag = False
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V67 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V68 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
@@ -2571,7 +2622,8 @@ if __name__ == "__main__":
         )
         enhance_button.click(fn=prompt_enc, inputs=[prompt_box, tar_lang], outputs=prompt_box)
         generate_button.click(
-            fn=generate_videos,
+            fn=generate_videos_with_path, # Use the partial function here
+            # Pass DEFAULT_OUTPUT_DIR explicitly to ensure it overrides the default if set via args
             inputs=[
                 prompt_box, tar_lang, negative_prompt, image_input, video_input, denoising_slider,
                 num_generations, save_prompt_checkbox, multiline_checkbox, use_random_seed_checkbox, seed_input,
@@ -2708,4 +2760,4 @@ if __name__ == "__main__":
         )
         extension_info_button.click(fn=show_extension_info, inputs=[], outputs=[extension_info_output])
         refresh_lora_button.click(fn=refresh_lora_list, outputs=[lora_dropdown, lora_dropdown_2, lora_dropdown_3, lora_dropdown_4])
-        demo.launch(share=args.share, inbrowser=True)
+        demo.launch(share=args.share, inbrowser=True, allowed_paths=get_available_drives())
