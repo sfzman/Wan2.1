@@ -1691,11 +1691,11 @@ def generate_videos(
                     common_args_ext["tea_cache_l1_thresh"] = None
                     common_args_ext["tea_cache_model_id"] = ""
                     
-                # Get extension filename with atomic file generation
-                ext_file_prefix = f"{base_name}_ext{ext_iter}"
+                # Get extension filename with atomic file generation - MODIFIED NAME
+                ext_file_prefix = f"{base_name}_ext{ext_iter}_original" # Changed suffix
                 extension_filename, extension_temp_file = get_next_filename("mp4", output_dir=output_folder, 
-                                                                         custom_filename=ext_file_prefix if custom_output_filename else None)
-                log_text += f"[CMD] Generating extension segment {ext_iter} using model {extension_model_choice if int(extend_factor)>1 else model_choice}\n"
+                                                                         custom_filename=ext_file_prefix) # Removed custom_filename check for simplicity here
+                log_text += f"[CMD] Generating extension segment {ext_iter} (as {os.path.basename(extension_filename)}) using model {extension_model_choice if int(extend_factor)>1 else model_choice}\n" # Added filename to log
                 try:
                     ext_start_time = time.time()
                     
@@ -1836,7 +1836,8 @@ def generate_videos(
                             ext_segments_improved.append(ext_file)
                             continue
                             
-                        ext_improved_name = f"{base_name}_ext{idx+1}_improved" if custom_output_filename else None
+                        # MODIFIED NAME for RIFE extension output
+                        ext_improved_name = f"{base_name}_ext{idx+1}_original{rife_suffix}" # Changed name format
                         ext_improved, ext_improved_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=ext_improved_name)
                         try:
                             cap = cv2.VideoCapture(ext_file)
@@ -1882,7 +1883,8 @@ def generate_videos(
             if ext_segments and not cancel_flag:
                 try:
                     merge_list = [original_filename] + ext_segments
-                    merged_original_name = f"{base_name}_extended_original" if custom_output_filename else None
+                    # MODIFIED NAME for merged original file
+                    merged_original_name = f"{base_name}_extended_{additional_extensions}" # Use final extension number
                     merged_original, merged_original_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=merged_original_name)
                     filelist_path = os.path.join(tempfile.gettempdir(), "filelist_original.txt")
                     with open(filelist_path, "w", encoding="utf-8") as f:
@@ -1924,8 +1926,8 @@ def generate_videos(
                 if pr_rife_enabled and ext_segments_improved and not cancel_flag:
                     try:
                         merge_list_improved = [original_improved] + ext_segments_improved
-                        suffix = "_extended_original_enhanced" if len(ext_segments_improved) > 1 else "_extended_enhanced"
-                        merged_enhanced_name = f"{base_name}{suffix}" if custom_output_filename else None
+                        # MODIFIED NAME for merged enhanced file
+                        merged_enhanced_name = f"{base_name}_extended_{additional_extensions}{rife_suffix}" # Use final extension number and RIFE suffix
                         merged_enhanced, merged_enhanced_temp = get_next_filename("mp4", output_dir=output_folder, custom_filename=merged_enhanced_name)
                         filelist_path = os.path.join(tempfile.gettempdir(), "filelist_enhanced.txt")
                         with open(filelist_path, "w", encoding="utf-8") as f:
@@ -1969,7 +1971,7 @@ def generate_videos(
                 final_output_video = merged_enhanced
             elif merged_original and os.path.exists(merged_original):
                 final_output_video = merged_original
-            elif original_improved and os.path.exists(original_improved):
+            elif pr_rife_enabled and original_improved and os.path.exists(original_improved): # Check RIFE enabled here
                 final_output_video = original_improved
             else:
                 final_output_video = original_filename
@@ -2447,7 +2449,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V68 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V69 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
