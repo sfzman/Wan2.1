@@ -2038,14 +2038,18 @@ def batch_process_videos(
         except Exception as e:
             log_text += f"[CMD] Error creating output folder {batch_output_folder}: {e}\n"
             return log_text
-    files = os.listdir(folder_path)
+    files_unsorted = os.listdir(folder_path)
+    # Sort files using natural sort key
+    files_unsorted.sort(key=alphanum_key)
+
     allowed_exts = [".jpg", ".png", ".jpeg", ".mp4", ".webp"]
-    files = [f for f in files if os.path.splitext(f)[1].lower() in allowed_exts]
+    # Filter *after* sorting to maintain order of allowed files
+    files = [f for f in files_unsorted if os.path.splitext(f)[1].lower() in allowed_exts]
     total_files = len(files)
-    log_text += f"[CMD] Found {total_files} files in folder {folder_path}\n"
+    log_text += f"[CMD] Found {total_files} files in folder {folder_path} (sorted naturally)\\n"
     for file in files:
         if cancel_batch_flag:
-            log_text += "[CMD] Batch processing cancelled by user.\n"
+            log_text += "[CMD] Batch processing cancelled by user.\\n"
             return log_text
             
         file_path = os.path.join(folder_path, file)
@@ -2055,16 +2059,16 @@ def batch_process_videos(
             with open(prompt_path, "r", encoding="utf-8") as f:
                 prompt_content = f.read().strip()
             if prompt_content == "":
-                log_text += f"[CMD] Prompt file {base+'.txt'} is empty, using default prompt.\n"
+                log_text += f"[CMD] Prompt file {base+'.txt'} is empty, using default prompt.\\n"
                 prompt_content = default_prompt
             else:
-                log_text += f"[CMD] Using prompt from {base+'.txt'} for {file}\n"
+                log_text += f"[CMD] Using prompt from {base+'.txt'} for {file}\\n"
         else:
-            log_text += f"[CMD] No prompt file for {file}, using default prompt.\n"
+            log_text += f"[CMD] No prompt file for {file}, using default prompt.\\n"
             prompt_content = default_prompt
             
         if cancel_batch_flag:
-            log_text += "[CMD] Batch processing cancelled by user.\n"
+            log_text += "[CMD] Batch processing cancelled by user.\\n"
             return log_text
             
         ext_lower = ext.lower()
@@ -2078,14 +2082,14 @@ def batch_process_videos(
             if model_choice_radio == "WAN 2.1 1.3B (Text/Video-to-Video)":
                 # Ensure num_frames is valid before re-encoding
                 frames_to_use = int(num_frames)
-                log_text += f"[CMD] Processing video-to-video with 1.3B model for {file}, checking if re-encoding needed...\n"
+                log_text += f"[CMD] Processing video-to-video with 1.3B model for {file}, checking if re-encoding needed...\\n"
                 
                 # Import here to avoid circular imports
                 from video_utils import reencode_video_to_16fps
                 
                 reencoded_video = reencode_video_to_16fps(video_in, frames_to_use, target_width=int(width), target_height=int(height))
                 if reencoded_video != video_in:
-                    log_text += f"[CMD] Re-encoded input video {file} to 16 FPS: {reencoded_video}\n"
+                    log_text += f"[CMD] Re-encoded input video {file} to 16 FPS: {reencoded_video}\\n"
                     video_in = reencoded_video
         else:
             try:
@@ -2093,13 +2097,13 @@ def batch_process_videos(
                 loaded_img = ImageOps.exif_transpose(loaded_img)
                 image_in = loaded_img.convert("RGB")
             except Exception as e:
-                log_text += f"[CMD] Error loading image {file_path}: {e}\n"
+                log_text += f"[CMD] Error loading image {file_path}: {e}\\n"
                 continue
             video_in = None
             orig_video_path = None  # No original video for image inputs
         
         if cancel_batch_flag:
-            log_text += "[CMD] Batch processing cancelled by user.\n"
+            log_text += "[CMD] Batch processing cancelled by user.\\n"
             return log_text
             
         custom_filename = base
@@ -2124,7 +2128,7 @@ def batch_process_videos(
         log_text += single_log
         
         if cancel_batch_flag:
-            log_text += "[CMD] Batch processing cancelled by user after file completion.\n"
+            log_text += "[CMD] Batch processing cancelled by user after file completion.\\n"
             # Clean up temporary re-encoded videos
             clean_temp_videos()
             return log_text
@@ -2418,6 +2422,18 @@ def get_available_drives():
     print(f"Allowed Gradio paths: {existing_paths}")
     return existing_paths
 
+# Helper function for natural sorting (like Windows Explorer)
+def alphanum_key(s):
+    """ Turn a string into a list of string and number chunks.
+        "z23a" -> ["z", 23, "a"]
+    """
+    def tryint(s):
+        try:
+            return int(s)
+        except ValueError:
+            return s
+    return [tryint(c) for c in re.split('([0-9]+)', s)]
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt_extend_method", type=str, default="local_qwen", choices=["dashscope", "local_qwen"],
@@ -2449,7 +2465,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V69 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V70 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
