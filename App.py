@@ -2465,7 +2465,7 @@ if __name__ == "__main__":
     cancel_batch_flag = False
     prompt_expander = None
     with gr.Blocks() as demo:
-        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V70 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
+        gr.Markdown("SECourses Wan 2.1 I2V - V2V - T2V Advanced Gradio APP V71 | Tutorial : https://youtu.be/hnAhveNy-8s | Source : https://www.patreon.com/posts/123105403")
         with gr.Row():
             with gr.Column(scale=4):
                 with gr.Row():
@@ -2531,8 +2531,8 @@ if __name__ == "__main__":
                             pr_rife_radio = gr.Radio(choices=["2x FPS", "4x FPS"], label="FPS Multiplier", value=config_loaded.get("pr_rife_multiplier", "2x FPS"))
                     with gr.Column():
                         with gr.Row():
-                            cfg_scale_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("cfg_scale", 6.0), label="CFG Scale")
-                            sigma_shift_slider = gr.Slider(minimum=3, maximum=12, step=0.1, value=config_loaded.get("sigma_shift", 6.0), label="Sigma Shift")
+                            cfg_scale_slider = gr.Slider(minimum=1, maximum=12, step=0.1, value=config_loaded.get("cfg_scale", 6.0), label="CFG Scale")
+                            sigma_shift_slider = gr.Slider(minimum=1, maximum=12, step=0.1, value=config_loaded.get("sigma_shift", 6.0), label="Sigma Shift")
                 gr.Markdown("### GPU Settings - If you get out of VRAM error or if it uses shared VRAM, reduce this number, FP8 may generate color broken at the moment in I2V")
                 with gr.Row():
                     num_persistent_text = gr.Textbox(label="Number of Persistent Parameters In Dit (VRAM)", value=config_loaded.get("num_persistent", "12000000000"))
