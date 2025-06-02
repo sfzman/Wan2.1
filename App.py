@@ -419,7 +419,7 @@ def get_default_config():
         "num_generations": 1,
         "use_random_seed": True,
         "seed": "",
-        "quality": 5,
+        "quality": 10,
         "fps": 16,
         "num_frames": 81,
         "denoising_strength": 0.7,
