@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 # 导入App.py中的批处理函数
-from App import batch_process_videos, get_default_config
+from App import batch_process_videos
 
 def setup_batch_folder(images_dir, prompts_file, batch_folder="batch_inputs"):
     """

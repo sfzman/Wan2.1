@@ -21,10 +21,10 @@
 
 ### 2. 运行脚本
 
-基本用法：
+基本用法(在Wan2.1根目录下运行)：
 
 ```bash
-python batch_process.py --images images/ --prompts example_prompts.json --config example_config.json
+python batch_process.py --images ./batch_processor/images/ --prompts ./batch_processor/example_prompts.json --config ./batch_processor/example_config.json
 ```
 
 ### 3. 参数说明
