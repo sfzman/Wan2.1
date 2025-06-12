@@ -15,7 +15,7 @@
 auto_pre_processed_images
 *.ckpt
 *.safetensors
-*.json
+# *.json
 # *.txt
 *.backup
 models
