@@ -24,8 +24,23 @@ def setup_batch_folder(images_dir, prompts_file, batch_folder="batch_inputs"):
         prompts = json.load(f)
     
     # 处理每个图像和对应的提示
+    img_count = len(os.listdir(images_dir))
     for img_file in os.listdir(images_dir):
         if img_file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            # 获取不带扩展名的文件名
+            base_name = os.path.splitext(img_file)[0]
+            
+            # 查找对应的提示
+            prompt = prompts.get(img_file) or prompts.get(base_name, None)
+            if not prompt:
+                print(f"本轮即将处理跳过{img_file}, 因为没有找到对应的prompt。")
+                img_count = img_count - 1
+                continue
+            
+            # 创建提示文本文件
+            with open(os.path.join(batch_folder, f"{base_name}.txt"), 'w', encoding='utf-8') as f:
+                f.write(prompt)
+
             # 源文件路径
             src_path = os.path.join(images_dir, img_file)
             # 目标文件路径
@@ -33,18 +48,8 @@ def setup_batch_folder(images_dir, prompts_file, batch_folder="batch_inputs"):
             
             # 复制图像文件
             shutil.copy2(src_path, dst_path)
-            
-            # 获取不带扩展名的文件名
-            base_name = os.path.splitext(img_file)[0]
-            
-            # 查找对应的提示
-            prompt = prompts.get(img_file) or prompts.get(base_name, "A high quality video")
-            
-            # 创建提示文本文件
-            with open(os.path.join(batch_folder, f"{base_name}.txt"), 'w', encoding='utf-8') as f:
-                f.write(prompt)
     
-    print(f"已准备 {len(os.listdir(images_dir))} 个文件到批处理文件夹 {batch_folder}")
+    print(f"已准备 {img_count} 个文件到批处理文件夹 {batch_folder}")
     return batch_folder
 
 def main():
