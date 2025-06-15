@@ -17,14 +17,17 @@ def setup_batch_folder(images_dir, prompts_file, batch_folder="batch_inputs"):
         batch_folder: 批处理输入文件夹
     """
     # 确保批处理文件夹存在
-    os.makedirs(batch_folder, exist_ok=True)
+    if os.path.exists(batch_folder):
+        print(f"{batch_folder} already exists. Deleting...")
+        shutil.rmtree(batch_folder)
+    os.makedirs(batch_folder)
     
     # 加载提示
     with open(prompts_file, 'r', encoding='utf-8') as f:
         prompts = json.load(f)
     
     # 处理每个图像和对应的提示
-    img_count = len(os.listdir(images_dir))
+    img_count = 0
     for img_file in os.listdir(images_dir):
         if img_file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
             # 获取不带扩展名的文件名
@@ -34,8 +37,8 @@ def setup_batch_folder(images_dir, prompts_file, batch_folder="batch_inputs"):
             prompt = prompts.get(img_file) or prompts.get(base_name, None)
             if not prompt:
                 print(f"本轮即将处理跳过{img_file}, 因为没有找到对应的prompt。")
-                img_count = img_count - 1
                 continue
+            img_count = img_count + 1
             
             # 创建提示文本文件
             with open(os.path.join(batch_folder, f"{base_name}.txt"), 'w', encoding='utf-8') as f:
